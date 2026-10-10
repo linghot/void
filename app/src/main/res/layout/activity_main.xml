@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="12dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/header"
+        android:textStyle="bold"
+        android:textSize="16sp" />
+
+    <Button
+        android:id="@+id/btnPermissions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/btn_permissions" />
+
+    <Button
+        android:id="@+id/btnOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/btn_overlay" />
+
+    <Button
+        android:id="@+id/btnProbe"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/btn_probe" />
+
+    <Button
+        android:id="@+id/btnInterpret"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/btn_interpret" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="8dp">
+
+        <TextView
+            android:id="@+id/log"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="12sp" />
+    </ScrollView>
+
+</LinearLayout>
