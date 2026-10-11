@@ -145,6 +145,8 @@ class InterpreterService : Service() {
             "识别：${asr.name}（就绪=$asrReady）｜ 翻译：${translator.name} ｜ " +
                 "语言：${Settings.asrLanguage(this)} ｜ 临时字幕：${if (Settings.partialEnabled(this)) "开" else "关"}"
         )
+        // 把接口地址和模型名打出来，方便对不上时一眼看出（不含 Key）
+        notifyLog("翻译接口：${Settings.baseUrl(this)} ｜ 模型：${Settings.mtModel(this)}")
         if (!Settings.translatorReady(this)) {
             notifyLog("提示：翻译 API 未配置，字幕第二行会与第一行相同（设置页可填）")
         }

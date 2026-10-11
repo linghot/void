@@ -78,8 +78,17 @@ class OpenAiCompatTranslator(
             } ?: ""
 
             if (code !in 200..299) {
-                // 失败降级：把原文交回去，字幕不至于断掉
-                "[HTTP $code] $text"
+                // ★ 把服务器的原话带出来：以前只显示状态码，等于把最有用的信息丢了
+                val hint = when (code) {
+                    400 -> "请求被拒"
+                    401 -> "Key 无效"
+                    402 -> "余额不足"
+                    403 -> "无权限"
+                    404 -> "地址不对（要含 /v1）"
+                    429 -> "请求太频繁"
+                    else -> ""
+                }
+                "[HTTP $code $hint] ${extractErrorMessage(body).take(150)}"
             } else {
                 extractContent(body) ?: text
             }
@@ -92,11 +101,44 @@ class OpenAiCompatTranslator(
 
     private fun buildPayload(text: String): String = buildString {
         append("""{"model":""").append(jsonEscape(model)).append(""",""")
-        append(""""temperature":0,""")
+        // 刻意不发 temperature：不同服务商对取值范围要求不一（有的不接受 0），
+        // 用服务端默认值最保险，少一个被 400 拒绝的理由。
         append(""""messages":[""")
         append("""{"role":"system","content":""").append(jsonEscape(systemPrompt)).append("""},""")
         append("""{"role":"user","content":""").append(jsonEscape(text)).append("""}""")
         append("""]}""")
+    }
+
+    /** 从错误响应里抓出可读原因：优先 error.message，其次整体截断 */
+    private fun extractErrorMessage(body: String): String {
+        if (body.isBlank()) return "（服务器没有返回内容）"
+        val key = "\"message\""
+        val i = body.indexOf(key)
+        if (i >= 0) {
+            val j = body.indexOf('"', i + key.length)
+            if (j >= 0) {
+                var k = j + 1
+                val sb = StringBuilder()
+                while (k < body.length) {
+                    val c = body[k]
+                    if (c == '\\' && k + 1 < body.length) {
+                        when (body[k + 1]) {
+                            'n' -> sb.append(' ')
+                            '"' -> sb.append('"')
+                            '\\' -> sb.append('\\')
+                            else -> sb.append(body[k + 1])
+                        }
+                        k += 2
+                        continue
+                    }
+                    if (c == '"') break
+                    sb.append(c)
+                    k++
+                }
+                if (sb.isNotEmpty()) return sb.toString()
+            }
+        }
+        return body.replace("\n", " ")
     }
 
     /** 最简 JSON 字符串转义 */
