@@ -35,8 +35,8 @@ object Settings {
         "你是实时字幕翻译引擎。把用户输入的文本翻译成简体中文，只输出译文，" +
             "不要解释、不要加引号、不要重复原文。保留人名和专有名词。"
 
-    /** 线程数默认 3：4 线程看着快一点，但功耗/发热明显更高 */
-    const val DEFAULT_THREADS = 3
+    /** 线程数默认 4：v1.0 修好编译优化后，4 线程在多数机器上既不烫又够快 */
+    const val DEFAULT_THREADS = 4
 
     /** 默认 16sp，和手机常见字幕大小接近 */
     const val DEFAULT_FONT_SP = 16
@@ -145,6 +145,28 @@ object Settings {
         prefs(context).edit()
             .putInt(KEY_OVERLAY_X, 24)
             .putInt(KEY_OVERLAY_Y, 360)
+            .apply()
+    }
+
+    // ---------------------------------------------------------------- 应用内更新
+
+    private const val KEY_UPDATE_URL = "update_api_url"
+    private const val KEY_UPDATE_TOKEN = "update_token"
+
+    /** 默认就是你这个仓库的 Release 接口 */
+    const val DEFAULT_UPDATE_URL = "https://api.github.com/repos/linghot/void/releases/latest"
+
+    fun updateUrl(context: Context): String =
+        prefs(context).getString(KEY_UPDATE_URL, DEFAULT_UPDATE_URL)?.trim().orEmpty()
+
+    /** 私有仓库需要只读 token；只存本机 */
+    fun updateToken(context: Context): String =
+        prefs(context).getString(KEY_UPDATE_TOKEN, "")?.trim().orEmpty()
+
+    fun saveUpdater(context: Context, url: String, token: String) {
+        prefs(context).edit()
+            .putString(KEY_UPDATE_URL, url.trim())
+            .putString(KEY_UPDATE_TOKEN, token.trim())
             .apply()
     }
 }

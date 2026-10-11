@@ -63,7 +63,8 @@ class MainActivity : Activity() {
         InterpreterService.logListener = { line -> append(line) }
         InterpreterService.stateListener = { running -> ui.post { applyRunningState(running) } }
 
-        append("离线同传 v0.9 · 已移除探针（M0 验证完成），权限改为自动申请")
+        append("离线同传 v1.0 · 修复了编译优化（识别速度会快一个数量级）")
+        append("ABI：${Build.SUPPORTED_ABIS.joinToString(" / ")}")
         append("用法：授权 → 下载/导入模型 → 点「启动同传」→ 打开你要看的视频")
         append("字幕可拖动；单击字幕切换详细/精简")
         append("")

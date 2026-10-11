@@ -16,8 +16,8 @@ android {
         // AudioPlaybackCapture 从 Android 10 (API 29) 才有，低于此版本无解
         minSdk = 29
         targetSdk = 34
-        versionCode = 9
-        versionName = "0.9-auto"
+        versionCode = 10
+        versionName = "1.0-perf"
 
         ndk {
             // 只打主流真机架构。要用模拟器就再加上 "x86_64"
@@ -26,7 +26,11 @@ android {
 
         externalNativeBuild {
             cmake {
-                arguments += listOf("-DANDROID_STL=c++_shared")
+                arguments += listOf(
+                    "-DANDROID_STL=c++_shared",
+                    // 双保险：即使 AGP 传 Debug，也走优化配置（CMakeLists 里还有一层覆盖）
+                    "-DCMAKE_BUILD_TYPE=Release"
+                )
                 cppFlags += "-O3"
             }
         }

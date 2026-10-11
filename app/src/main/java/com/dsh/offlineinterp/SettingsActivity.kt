@@ -4,6 +4,7 @@ import android.app.Activity
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
@@ -13,9 +14,11 @@ import android.widget.EditText
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import com.dsh.offlineinterp.pipeline.ModelCatalog
 import com.dsh.offlineinterp.pipeline.ModelStore
 import com.dsh.offlineinterp.pipeline.Settings
 import com.dsh.offlineinterp.pipeline.TranslatorFactory
+import com.dsh.offlineinterp.pipeline.Updater
 
 /**
  * 设置页（v0.7 重做）：翻译 API / 识别 / 字幕外观三块卡片。
@@ -38,6 +41,9 @@ class SettingsActivity : Activity() {
     private lateinit var spFont: Spinner
     private lateinit var cbPartial: CheckBox
     private lateinit var tvResult: TextView
+    private lateinit var etUpdateUrl: EditText
+    private lateinit var etUpdateToken: EditText
+    private lateinit var tvUpdateResult: TextView
 
     private val langIds = listOf("auto", "zh", "en", "ja")
     private val langLabels = listOf("自动检测", "中文（zh）", "英文（en）", "日文（ja）")
@@ -128,6 +134,28 @@ class SettingsActivity : Activity() {
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
         }
 
+        // API Key：默认明文（否则很多 ROM 会禁止长按粘贴），可勾选隐藏
+        etApiKey.inputType =
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        findViewById<CheckBox>(R.id.cbHideKey).setOnCheckedChangeListener { _, checked ->
+            etApiKey.inputType = if (checked) {
+                InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            } else {
+                InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+            }
+            etApiKey.setSelection(etApiKey.text.length)
+        }
+
+        // 应用内更新
+        etUpdateUrl = findViewById(R.id.etUpdateUrl)
+        etUpdateToken = findViewById(R.id.etUpdateToken)
+        tvUpdateResult = findViewById(R.id.tvUpdateResult)
+        etUpdateUrl.setText(Settings.updateUrl(this))
+        etUpdateToken.setText(Settings.updateToken(this))
+        findViewById<Button>(R.id.btnFetchModels).setOnClickListener { fetchModels() }
+        findViewById<Button>(R.id.btnCheckUpdate).setOnClickListener { checkUpdate() }
+        tvUpdateResult.text = "当前版本：${Updater.currentVersion(this)}"
+
         spAsrModel.adapter = simple(ModelStore.MODELS.map { it.label })
         spAsrModel.setSelection(
             ModelStore.MODELS.indexOfFirst { it.id == Settings.asrModelId(this) }
@@ -186,11 +214,70 @@ class SettingsActivity : Activity() {
         spMtModel.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, pos: Int, id: Long) {
                 if (binding) return
-                etModel.setText(models[pos.coerceIn(0, models.size - 1)])
+                // 从适配器现取，避免"换过列表后写入旧值"
+                val value = parent?.getItemAtPosition(pos)?.toString() ?: return
+                etModel.setText(value)
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
         }
+    }
+
+    /** 从服务端拉真实模型列表：模型名迭代很快，写死在代码里永远追不上 */
+    private fun fetchModels() {
+        val baseUrl = etBaseUrl.text.toString()
+        val apiKey = etApiKey.text.toString()
+        if (baseUrl.isBlank()) {
+            tvResult.text = "先在上面填接口地址，再拉模型列表"
+            return
+        }
+        tvResult.text = "正在拉取模型列表…"
+        Thread({
+            val (ids, err) = ModelCatalog.fetch(baseUrl, apiKey)
+            ui.post {
+                if (ids.isEmpty()) {
+                    tvResult.text = "拉取失败：$err（可以继续手打模型名）"
+                } else {
+                    binding = true
+                    spMtModel.adapter = simple(ids)
+                    binding = false
+                    tvResult.text =
+                        "拉到 ${ids.size} 个模型：${ids.take(8).joinToString("、")}${if (ids.size > 8) " …" else ""}"
+                }
+            }
+        }, "catalog").start()
+    }
+
+    /** 应用内更新：查 Release → 下载 APK → 交给系统安装器 */
+    private fun checkUpdate() {
+        val url = etUpdateUrl.text.toString().ifBlank { Settings.DEFAULT_UPDATE_URL }
+        val token = etUpdateToken.text.toString()
+        Settings.saveUpdater(this, url, token)
+
+        val current = Updater.currentVersion(this)
+        tvUpdateResult.text = "当前 $current，正在检查…"
+        Thread({
+            val (info, err) = Updater.check(url, token)
+            if (info == null) {
+                ui.post { tvUpdateResult.text = "检查失败：$err" }
+                return@Thread
+            }
+            if (info.version == current) {
+                ui.post { tvUpdateResult.text = "已是最新版本（${info.tag}）" }
+                return@Thread
+            }
+            ui.post { tvUpdateResult.text = "发现新版本 ${info.tag}，开始下载…" }
+            val (ok, msg) = Updater.downloadAndInstall(
+                this,
+                info.apkUrl,
+                "offline-interp-${info.tag}.apk",
+                token
+            ) { done, total ->
+                val pct = if (total > 0) done * 100 / total else -1
+                ui.post { tvUpdateResult.text = "下载中 $pct%（${done / 1024 / 1024} MB）" }
+            }
+            ui.post { tvUpdateResult.text = if (ok) msg else "更新失败：$msg" }
+        }, "update").start()
     }
 
     private fun selectedModelId(): String =
@@ -215,6 +302,7 @@ class SettingsActivity : Activity() {
         )
         Settings.saveAsr(this, selectedModelId(), selectedLang(), cbPartial.isChecked, selectedThreads())
         Settings.saveOverlayStyle(this, selectedFont(), Settings.overlayDetail(this))
+        Settings.saveUpdater(this, etUpdateUrl.text.toString(), etUpdateToken.text.toString())
 
         Toast.makeText(this, "已保存（仅存在本机）", Toast.LENGTH_SHORT).show()
         tvResult.text = buildString {

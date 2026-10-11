@@ -66,6 +66,14 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content" />
 
+            <Button
+                android:id="@+id/btnFetchModels"
+                style="@style/SecondaryButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/settings_fetch_models" />
+
             <TextView
                 style="@style/FieldLabel"
                 android:layout_width="wrap_content"
@@ -105,8 +113,15 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:hint="@string/hint_api_key"
-                android:inputType="textPassword"
+                android:inputType="textVisiblePassword"
                 android:textSize="14sp" />
+
+            <CheckBox
+                android:id="@+id/cbHideKey"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_hide_key"
+                android:textSize="13sp" />
 
             <TextView
                 style="@style/FieldLabel"
@@ -260,6 +275,65 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:text="@string/settings_overlay_hint"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- ================= 应用内更新 ================= -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <TextView
+                style="@style/SectionTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_section_update" />
+
+            <TextView
+                style="@style/FieldLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_update_url" />
+
+            <EditText
+                android:id="@+id/etUpdateUrl"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textUri"
+                android:textSize="13sp" />
+
+            <TextView
+                style="@style/FieldLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_update_token" />
+
+            <EditText
+                android:id="@+id/etUpdateToken"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/hint_update_token"
+                android:inputType="textVisiblePassword"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/btnCheckUpdate"
+                style="@style/PrimaryButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/settings_check_update" />
+
+            <TextView
+                android:id="@+id/tvUpdateResult"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
                 android:textColor="@color/text_secondary"
                 android:textSize="12sp" />
         </LinearLayout>

@@ -44,4 +44,12 @@
     <string name="settings_overlay_hint">字幕可以直接在屏幕上按住拖动；单击切换详细/精简；位置与字号都会记住。</string>
 
     <string name="settings_footer">改完识别模型后，回主界面下载或导入对应的模型文件。</string>
+
+    <string name="settings_fetch_models">从服务器拉取模型列表</string>
+    <string name="settings_hide_key">隐藏 API Key（隐藏后部分手机无法长按粘贴）</string>
+    <string name="settings_section_update">应用内更新</string>
+    <string name="settings_update_url">更新源（GitHub Release 接口）</string>
+    <string name="settings_update_token">只读 Token（私有仓库必填）</string>
+    <string name="hint_update_token">github_pat_... 或 ghp_...</string>
+    <string name="settings_check_update">检查更新并下载</string>
 </resources>

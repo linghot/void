@@ -9,6 +9,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # 发 Release 需要写权限
+    permissions:
+      contents: write
     # whisper.cpp 首次编译比较慢（要克隆 + 编译 C/C++），给足时间
     timeout-minutes: 60
 
@@ -50,9 +53,26 @@ jobs:
       - name: 编译 debug APK
         run: gradle assembleDebug --no-daemon --stacktrace
 
-      - name: 上传 APK
+      - name: 上传 APK（本次运行的产物）
         uses: actions/upload-artifact@v4
         with:
           name: offline-interp-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      # ↓ 让"应用内更新"能工作：把 APK 发成一个 Release，App 通过 GitHub API 读最新版本
+      - name: 读取版本号
+        id: ver
+        run: |
+          V=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "版本号: $V"
+
+      - name: 发布 Release（应用内更新读取这里）
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: v${{ steps.ver.outputs.version }}
+          body: 自动构建的安装包；应用内的「检查更新」会读这个 Release。
+          files: app/build/outputs/apk/debug/*.apk
+          make_latest: true
