@@ -46,6 +46,8 @@
     <string name="settings_footer">改完识别模型后，回主界面下载或导入对应的模型文件。</string>
 
     <string name="settings_fetch_models">从服务器拉取模型列表</string>
+    <string name="settings_test_models">逐个测试哪些模型能用（推荐）</string>
+    <string name="btn_paste_model">📋 粘贴模型名</string>
     <string name="settings_hide_key">隐藏 API Key（隐藏后部分手机无法长按粘贴）</string>
     <string name="settings_section_update">应用内更新</string>
     <string name="settings_update_url">更新源（GitHub Release 接口）</string>

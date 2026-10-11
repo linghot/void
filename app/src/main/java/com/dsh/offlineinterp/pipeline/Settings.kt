@@ -78,6 +78,23 @@ object Settings {
             .apply()
     }
 
+    // ------------------------------------------------- 从服务器拉到的模型列表缓存
+
+    private const val KEY_MT_MODELS_CACHE = "mt_models_cache"
+
+    /** 上次从服务端拉到的模型列表（换手机/重开也能继续用） */
+    fun cachedModels(context: Context): List<String> =
+        (prefs(context).getString(KEY_MT_MODELS_CACHE, "") ?: "")
+            .split('\n')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+
+    fun saveCachedModels(context: Context, models: List<String>) {
+        prefs(context).edit()
+            .putString(KEY_MT_MODELS_CACHE, models.distinct().joinToString("\n"))
+            .apply()
+    }
+
     // ---------------------------------------------------------------- 识别
 
     fun asrModelId(context: Context): String =

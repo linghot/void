@@ -68,4 +68,59 @@ object ModelCatalog {
         }
         return out.sorted()
     }
+
+    // ------------------------------------------------------------- 单个模型可用性测试
+
+    data class ProbeResult(val model: String, val ok: Boolean, val message: String)
+
+    /**
+     * 真发一次最小请求，判断这个模型名到底能不能用。
+     * 结果就是最权威的答案：能不能用、不能用是为什么（服务器原话）。
+     */
+    fun probe(baseUrl: String, apiKey: String, model: String, timeoutMs: Int = 20_000): ProbeResult {
+        if (baseUrl.isBlank() || apiKey.isBlank() || model.isBlank()) {
+            return ProbeResult(model, false, "地址/Key/模型名有空的")
+        }
+
+        val endpoint = baseUrl.trimEnd('/') + "/chat/completions"
+        val payload = """{"model":"${model.replace("\"", "")}","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}"""
+
+        var conn: HttpURLConnection? = null
+        return try {
+            conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = timeoutMs
+                readTimeout = timeoutMs
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Authorization", "Bearer ${apiKey.trim()}")
+            }
+            conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+
+            val code = conn.responseCode
+            val body = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+
+            if (code in 200..299) {
+                ProbeResult(model, true, "可用 ✅")
+            } else {
+                ProbeResult(model, false, "HTTP $code：${firstMessage(body).take(90)}")
+            }
+        } catch (t: Throwable) {
+            ProbeResult(model, false, "${t.javaClass.simpleName}：${t.message}")
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    private fun firstMessage(body: String): String {
+        val key = "\"message\""
+        val i = body.indexOf(key)
+        if (i >= 0) {
+            val j = body.indexOf('"', i + key.length)
+            val k = if (j >= 0) body.indexOf('"', j + 1) else -1
+            if (j >= 0 && k > j) return body.substring(j + 1, k)
+        }
+        return body.replace("\n", " ").trim()
+    }
 }

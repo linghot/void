@@ -74,6 +74,14 @@
                 android:layout_marginTop="8dp"
                 android:text="@string/settings_fetch_models" />
 
+            <Button
+                android:id="@+id/btnTestModels"
+                style="@style/SecondaryButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="@string/settings_test_models" />
+
             <TextView
                 style="@style/FieldLabel"
                 android:layout_width="wrap_content"
@@ -99,8 +107,17 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:hint="@string/hint_model"
-                android:inputType="text"
+                android:importantForAutofill="no"
+                android:inputType="textNoSuggestions"
                 android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btnPasteModel"
+                style="@style/SecondaryButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="@string/btn_paste_model" />
 
             <TextView
                 style="@style/FieldLabel"

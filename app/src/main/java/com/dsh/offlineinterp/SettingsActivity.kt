@@ -95,6 +95,9 @@ class SettingsActivity : Activity() {
     /** 正在程序化设置下拉，避免回调把已保存的值覆盖掉 */
     private var binding = false
 
+    /** 下拉里的「手动输入」项：任何没列出来的模型名都能这样填 */
+    private val MANUAL_ENTRY = "✏️ 手动输入模型名"
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
@@ -130,6 +133,7 @@ class SettingsActivity : Activity() {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 if (binding) return
                 bindProvider(position, fillFields = true)
+                autoFetchModelsIfPossible()
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
@@ -155,6 +159,8 @@ class SettingsActivity : Activity() {
         etUpdateToken.setText(Settings.updateToken(this))
         findViewById<Button>(R.id.btnPasteToken).setOnClickListener { pasteInto(etUpdateToken) }
         findViewById<Button>(R.id.btnFetchModels).setOnClickListener { fetchModels() }
+        findViewById<Button>(R.id.btnTestModels).setOnClickListener { testModels() }
+        findViewById<Button>(R.id.btnPasteModel).setOnClickListener { pasteInto(etModel) }
         findViewById<Button>(R.id.btnCheckUpdate).setOnClickListener { checkUpdate() }
         tvUpdateResult.text = "当前版本：${Updater.currentVersion(this)}"
 
@@ -195,30 +201,43 @@ class SettingsActivity : Activity() {
     private fun simple(items: List<String>): ArrayAdapter<String> =
         ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, items)
 
-    /** 选服务商 → 自动填接口地址与常用模型；再选模型 → 写进"模型名"输入框 */
+    /**
+     * 选服务商 → 自动填接口地址与候选模型。
+     *
+     * 候选 = 内置常用（可能过时） + **上次从服务器拉到的真实列表** + 「✏️ 手动输入」。
+     * 这样服务商出多少新模型都不怕：要么能选到，要么能手打。
+     */
     private fun bindProvider(position: Int, fillFields: Boolean) {
         val provider = providers[position.coerceIn(0, providers.size - 1)]
-        val models = provider.models.ifEmpty {
-            listOf(etModel.text.toString().ifBlank { "deepseek-chat" })
-        }
+
+        val models = (provider.models + Settings.cachedModels(this)).distinct()
+        val items = listOf(MANUAL_ENTRY) + models
 
         binding = true
-        spMtModel.adapter = simple(models)
+        spMtModel.adapter = simple(items)
         if (fillFields && provider.baseUrl.isNotBlank()) {
             etBaseUrl.setText(provider.baseUrl)
         }
         if (fillFields) {
-            etModel.setText(models[0])
+            models.firstOrNull()?.let { etModel.setText(it) }
         }
-        spMtModel.setSelection(0)
+        // 下拉停在当前模型名那一项；没有对应项就停在「手动输入」
+        val current = etModel.text.toString().trim()
+        val idx = items.indexOf(current)
+        spMtModel.setSelection(if (idx < 0) 0 else idx)
         binding = false
 
         spMtModel.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, pos: Int, id: Long) {
                 if (binding) return
-                // 从适配器现取，避免"换过列表后写入旧值"
                 val value = parent?.getItemAtPosition(pos)?.toString() ?: return
-                etModel.setText(value)
+                if (value == MANUAL_ENTRY) {
+                    etModel.setText("")
+                    etModel.requestFocus()
+                    tvResult.text = "请手动输入模型名（用下面的粘贴按钮更快）"
+                } else {
+                    etModel.setText(value)
+                }
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
@@ -264,20 +283,78 @@ class SettingsActivity : Activity() {
             return
         }
         tvResult.text = "正在拉取模型列表…"
+        Thread({ fetchAndMerge(baseUrl, apiKey, quiet = false) }, "catalog").start()
+    }
+
+    /** 选了服务商就顺手拉一次（有 Key 才拉，安静失败不打扰） */
+    private fun autoFetchModelsIfPossible() {
+        val baseUrl = etBaseUrl.text.toString()
+        val apiKey = etApiKey.text.toString()
+        if (baseUrl.isBlank() || apiKey.isBlank()) return
+        Thread({ fetchAndMerge(baseUrl, apiKey, quiet = true) }, "catalog-auto").start()
+    }
+
+    private fun fetchAndMerge(baseUrl: String, apiKey: String, quiet: Boolean) {
+        val (ids, err) = ModelCatalog.fetch(baseUrl, apiKey)
+        if (ids.isEmpty()) {
+            ui.post { if (!quiet) tvResult.text = "拉取失败：$err（可以继续手打模型名）" }
+            return
+        }
+        Settings.saveCachedModels(this, ids)
+        ui.post {
+            val provider = providers[spProvider.selectedItemPosition.coerceIn(0, providers.size - 1)]
+            val models = (provider.models + ids).distinct()
+            binding = true
+            spMtModel.adapter = simple(listOf(MANUAL_ENTRY) + models)
+            val current = etModel.text.toString().trim()
+            val index = models.indexOf(current)
+            spMtModel.setSelection(if (index < 0) 0 else index + 1)
+            binding = false
+            tvResult.text = "服务器返回 ${ids.size} 个模型：" +
+                ids.take(10).joinToString("、") + if (ids.size > 10) " …" else ""
+        }
+    }
+
+    /**
+     * 逐个真发一次最小请求，告诉你**哪些模型名真的能用**。
+     * 这是对"模型选不到/选了报错"最权威的答案，测完自动选中第一个可用的。
+     */
+    private fun testModels() {
+        val baseUrl = etBaseUrl.text.toString()
+        val apiKey = etApiKey.text.toString()
+        if (baseUrl.isBlank() || apiKey.isBlank()) {
+            tvResult.text = "先填接口地址和 API Key，再测模型"
+            return
+        }
+
+        val candidates = (0 until spMtModel.adapter.count)
+            .map { spMtModel.adapter.getItem(it).toString() }
+            .filter { it != MANUAL_ENTRY }
+            .ifEmpty { listOf("deepseek-chat", "deepseek-reasoner") }
+
+        tvResult.text = "开始逐个测试 ${candidates.size} 个模型…"
         Thread({
-            val (ids, err) = ModelCatalog.fetch(baseUrl, apiKey)
+            val report = StringBuilder()
+            var firstOk: String? = null
+            candidates.forEachIndexed { index, model ->
+                val result = ModelCatalog.probe(baseUrl, apiKey, model)
+                if (result.ok && firstOk == null) firstOk = model
+                report.append(model).append(" → ").append(result.message).append('\n')
+                ui.post { tvResult.text = "测试中 ${index + 1}/${candidates.size}…\n$report" }
+            }
+            val ok = firstOk
             ui.post {
-                if (ids.isEmpty()) {
-                    tvResult.text = "拉取失败：$err（可以继续手打模型名）"
-                } else {
-                    binding = true
-                    spMtModel.adapter = simple(ids)
-                    binding = false
-                    tvResult.text =
-                        "拉到 ${ids.size} 个模型：${ids.take(8).joinToString("、")}${if (ids.size > 8) " …" else ""}"
+                tvResult.text = buildString {
+                    append(report)
+                    if (ok != null) {
+                        append("\n已自动选中可用模型：").append(ok)
+                        etModel.setText(ok)
+                    } else {
+                        append("\n没有可用模型：检查 Key、余额，或先点「从服务器拉取模型列表」拿到准确名字")
+                    }
                 }
             }
-        }, "catalog").start()
+        }, "probe-models").start()
     }
 
     /** 应用内更新：查 Release → 下载 APK → 交给系统安装器 */
