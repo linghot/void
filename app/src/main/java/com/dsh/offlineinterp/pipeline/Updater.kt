@@ -54,7 +54,15 @@ object Updater {
                 return null to "还没发布过 Release（CI 里已配置自动发布，推一次代码就有了）"
             }
             if (code == 401 || code == 403) {
-                return null to "HTTP $code：私有仓库需要在设置里填只读 token"
+                return null to when {
+                    token.isBlank() ->
+                        "HTTP $code：Token 没填。私有仓库必须填只读 Token（用设置页的「粘贴 Token」按钮），" +
+                            "或者把仓库改成公开就不需要 Token"
+                    token.length < 20 ->
+                        "HTTP $code：Token 只有 ${token.length} 个字符，像是没粘贴完整"
+                    else ->
+                        "HTTP $code：Token 无效或权限不足（需要 Contents: Read-only），也可能是已过期"
+                }
             }
             if (code !in 200..299) {
                 return null to "HTTP $code：${body.take(160)}"

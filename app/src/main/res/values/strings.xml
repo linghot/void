@@ -52,4 +52,7 @@
     <string name="settings_update_token">只读 Token（私有仓库必填）</string>
     <string name="hint_update_token">github_pat_... 或 ghp_...</string>
     <string name="settings_check_update">检查更新并下载</string>
+    <string name="btn_paste">📋 粘贴 API Key（绕过安全键盘）</string>
+    <string name="btn_paste_token">📋 粘贴 Token（绕过安全键盘）</string>
+    <string name="settings_paste_hint">如果长按弹不出「粘贴」，就先在别处复制，再点上面的粘贴按钮——它直接读剪贴板，不经过输入法。</string>
 </resources>

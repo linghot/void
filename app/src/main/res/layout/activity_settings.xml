@@ -113,8 +113,17 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:hint="@string/hint_api_key"
-                android:inputType="textVisiblePassword"
+                android:importantForAutofill="no"
+                android:inputType="textNoSuggestions"
                 android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btnPasteApiKey"
+                style="@style/SecondaryButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="@string/btn_paste" />
 
             <CheckBox
                 android:id="@+id/cbHideKey"
@@ -318,8 +327,25 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:hint="@string/hint_update_token"
-                android:inputType="textVisiblePassword"
+                android:importantForAutofill="no"
+                android:inputType="textNoSuggestions"
                 android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/btnPasteToken"
+                style="@style/SecondaryButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="@string/btn_paste_token" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/settings_paste_hint"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
 
             <Button
                 android:id="@+id/btnCheckUpdate"

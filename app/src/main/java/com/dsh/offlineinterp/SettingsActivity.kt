@@ -1,6 +1,7 @@
 package com.dsh.offlineinterp
 
 import android.app.Activity
+import android.content.ClipboardManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -134,14 +135,14 @@ class SettingsActivity : Activity() {
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
         }
 
-        // API Key：默认明文（否则很多 ROM 会禁止长按粘贴），可勾选隐藏
-        etApiKey.inputType =
-            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        // API Key：用 textNoSuggestions 避开系统的"安全键盘"（它会禁止粘贴）
+        etApiKey.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        findViewById<Button>(R.id.btnPasteApiKey).setOnClickListener { pasteInto(etApiKey) }
         findViewById<CheckBox>(R.id.cbHideKey).setOnCheckedChangeListener { _, checked ->
             etApiKey.inputType = if (checked) {
                 InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             } else {
-                InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+                InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             }
             etApiKey.setSelection(etApiKey.text.length)
         }
@@ -152,6 +153,7 @@ class SettingsActivity : Activity() {
         tvUpdateResult = findViewById(R.id.tvUpdateResult)
         etUpdateUrl.setText(Settings.updateUrl(this))
         etUpdateToken.setText(Settings.updateToken(this))
+        findViewById<Button>(R.id.btnPasteToken).setOnClickListener { pasteInto(etUpdateToken) }
         findViewById<Button>(R.id.btnFetchModels).setOnClickListener { fetchModels() }
         findViewById<Button>(R.id.btnCheckUpdate).setOnClickListener { checkUpdate() }
         tvUpdateResult.text = "当前版本：${Updater.currentVersion(this)}"
@@ -223,6 +225,36 @@ class SettingsActivity : Activity() {
         }
     }
 
+    /** 直接读剪贴板写入输入框：安全键盘禁止长按粘贴时用这个 */
+    private fun pasteInto(target: EditText) {
+        val text = try {
+            val manager = getSystemService(ClipboardManager::class.java)
+            val clip = manager?.primaryClip
+            if (clip != null && clip.itemCount > 0) {
+                clip.getItemAt(0).coerceToText(this).toString().trim()
+            } else {
+                ""
+            }
+        } catch (t: Throwable) {
+            ""
+        }
+
+        if (text.isEmpty()) {
+            Toast.makeText(this, "剪贴板是空的：先在别处复制 Token，再点这个按钮", Toast.LENGTH_LONG).show()
+            return
+        }
+        target.setText(text)
+        target.setSelection(text.length)
+        Toast.makeText(this, "已粘贴（${text.length} 个字符）", Toast.LENGTH_SHORT).show()
+    }
+
+    /** 只用于诊断：不泄露完整 Token */
+    private fun describeToken(token: String): String = when {
+        token.isBlank() -> "未填"
+        token.length < 20 -> "异常（只有 ${token.length} 个字符，可能没粘贴完整）"
+        else -> "已填 ${token.length} 字符（${token.take(11)}…${token.takeLast(4)}）"
+    }
+
     /** 从服务端拉真实模型列表：模型名迭代很快，写死在代码里永远追不上 */
     private fun fetchModels() {
         val baseUrl = etBaseUrl.text.toString()
@@ -255,7 +287,7 @@ class SettingsActivity : Activity() {
         Settings.saveUpdater(this, url, token)
 
         val current = Updater.currentVersion(this)
-        tvUpdateResult.text = "当前 $current，正在检查…"
+        tvUpdateResult.text = "当前 $current ｜ Token ${describeToken(token)}\n正在检查…"
         Thread({
             val (info, err) = Updater.check(url, token)
             if (info == null) {
