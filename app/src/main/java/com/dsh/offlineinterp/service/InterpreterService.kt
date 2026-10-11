@@ -171,7 +171,10 @@ class InterpreterService : Service() {
             if (asrReady) {
                 "识别：${asr.name}\n翻译：${translator.name}\n正在等待语音…"
             } else {
-                "识别模型不可用（请回 App 点第 3 步下载）\n当前为占位识别，不会出真字幕"
+                "⚠ 识别模型未就绪 —— 现在显示的全是占位文字，不可能有翻译\n" +
+                    "回 App 第 3 步：「下载识别模型」（已内置国内镜像）\n" +
+                    "或点「从文件导入模型」\n" +
+                    "放置目录：${ModelStore.dir(this).absolutePath}"
             }
         )
 
@@ -194,17 +197,24 @@ class InterpreterService : Service() {
     private fun chooseAsr(): AsrEngine {
         val id = Settings.asrModelId(this)
         val model = ModelStore.MODELS.firstOrNull { it.id == id } ?: ModelStore.DEFAULT
-        if (!ModelStore.isReady(this, model)) return StubAsrEngine()
+
+        val found = ModelStore.resolveFile(this, model)
+        if (found == null) {
+            notifyLog("未找到模型 ${model.fileName}，已查找以下位置：")
+            ModelStore.candidates(this, model).forEach { notifyLog("  · ${it.absolutePath}") }
+            return StubAsrEngine()
+        }
+        notifyLog("模型文件：${found.absolutePath}")
         return WhisperAsrEngine(
-            modelPath = ModelStore.file(this, model).absolutePath,
+            modelPath = found.absolutePath,
             threads = WHISPER_THREADS,
             language = Settings.asrLanguage(this)
         )
     }
 
     private fun startWorker() {
-        // 边说边出：设了开关才启用（CPU 换取低延迟）
-        streaming = if (Settings.partialEnabled(this)) {
+        // 边说边出：设了开关才启用（CPU 换取低延迟）。占位识别时不开，省电且没意义。
+        streaming = if (Settings.partialEnabled(this) && asr is WhisperAsrEngine) {
             StreamingTranscriber(asr, onPartial = { partial -> overlay.setText("〔识别中〕$partial") })
         } else {
             null

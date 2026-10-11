@@ -20,10 +20,8 @@ import com.dsh.offlineinterp.service.InterpreterService
 /**
  * 入口界面。6 步 + 设置页。
  *
- * 停止有三个入口（本页按钮 / 通知栏按钮 / 系统"停止共享"），
- * 状态由 [InterpreterService.stateListener] 回传，按钮自动启用禁用。
- *
- * 翻译与识别参数都在 [SettingsActivity] 里配，存在手机本地。
+ * v0.5 重点：把"模型没就绪"这件事变得**不可能被误解**——
+ * 下载支持国内镜像、支持从文件导入、界面直接列出查找过的路径。
  */
 class MainActivity : Activity() {
 
@@ -43,9 +41,8 @@ class MainActivity : Activity() {
         InterpreterService.logListener = { line -> append(line) }
         InterpreterService.stateListener = { running -> ui.post { applyRunningState(running) } }
 
-        append("离线同传 · v0.4（翻译 API 设置页 + 边说边出）")
-        append("顺序：1 权限 → 2 悬浮窗 → 3 下载模型 → 4 探针 → 5 启动 → 6 停止")
-        append("停止有三种方式：① 本页第 6 步  ② 通知栏「停止同传」  ③ 系统「停止共享」")
+        append("离线同传 · v0.5（模型下载加国内镜像 + 支持从文件导入）")
+        append("顺序：1 权限 → 2 悬浮窗 → 3 下载/导入模型 → 4 探针 → 5 启动 → 6 停止")
         append("")
 
         findViewById<Button>(R.id.btnPermissions).setOnClickListener { requestRuntimePermissions() }
@@ -70,6 +67,8 @@ class MainActivity : Activity() {
 
         findViewById<Button>(R.id.btnModel).setOnClickListener { downloadModel() }
 
+        findViewById<Button>(R.id.btnImport).setOnClickListener { pickModelFile() }
+
         findViewById<Button>(R.id.btnProbe).setOnClickListener {
             launchCapture(InterpreterService.MODE_PROBE)
         }
@@ -86,7 +85,6 @@ class MainActivity : Activity() {
         applyRunningState(InterpreterService.isRunning)
     }
 
-    /** 从设置页回来时刷新模型/翻译状态显示 */
     override fun onResume() {
         super.onResume()
         refreshConfigSummary()
@@ -99,21 +97,25 @@ class MainActivity : Activity() {
 
     private fun refreshConfigSummary() {
         val model = currentModel()
-        val modelState = if (ModelStore.isReady(this, model)) {
-            "已下载（${ModelStore.sizeMb(this, model)} MB）"
+        val found = ModelStore.resolveFile(this, model)
+        val modelState = if (found != null) {
+            "已就绪（${ModelStore.sizeMb(found)} MB）→ ${found.absolutePath}"
         } else {
-            "未下载 —— 点第 3 步"
+            "未就绪 —— 点第 3 步下载，或点「从文件导入模型」"
         }
         val mtState = if (Settings.translatorReady(this)) {
             "已配置（${Settings.mtModel(this)}）"
         } else {
-            "未配置 —— 当前原文直通，去设置页填"
+            "未配置 —— 当前原文直通，去 ⚙ 设置 填"
         }
-        append("当前配置：识别=${model.id}·$modelState ｜ 语言=${Settings.asrLanguage(this)} ｜ 翻译=$mtState")
-        append("模型目录：${ModelStore.dir(this).absolutePath}")
+        append("当前配置：识别=${model.id} ｜ $modelState")
+        append("　　　　　翻译=$mtState ｜ 语言=${Settings.asrLanguage(this)} ｜ 临时字幕=${if (Settings.partialEnabled(this)) "开" else "关"}")
+        if (found == null) {
+            append("会依次在这些位置找模型 ${model.fileName}：")
+            ModelStore.candidates(this, model).forEach { append("  · ${it.absolutePath}") }
+        }
     }
 
-    /** 按运行状态启用/禁用按钮 */
     private fun applyRunningState(running: Boolean) {
         findViewById<Button>(R.id.btnStop).isEnabled = running
         findViewById<Button>(R.id.btnProbe).isEnabled = !running
@@ -144,6 +146,17 @@ class MainActivity : Activity() {
     @Suppress("DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+
+        if (requestCode == REQ_IMPORT) {
+            val uri = data?.data
+            if (resultCode != RESULT_OK || uri == null) {
+                append("已取消选择文件")
+                return
+            }
+            importModel(uri)
+            return
+        }
+
         if (requestCode != REQ_CAPTURE) return
         if (resultCode != RESULT_OK || data == null) {
             append("授权被取消 —— 捕获必须要用户手动同意录屏")
@@ -153,47 +166,70 @@ class MainActivity : Activity() {
         InterpreterService.start(this, resultCode, data, pendingMode)
     }
 
-    // ------------------------------------------------------------ 模型下载
+    // ------------------------------------------------------------ 模型：下载 / 导入
 
     private fun downloadModel() {
         val model = currentModel()
         val target = ModelStore.file(this, model)
         val button = findViewById<Button>(R.id.btnModel)
 
-        if (ModelStore.isReady(this, model)) {
-            append("模型已就绪：${model.fileName}（${ModelStore.sizeMb(this, model)} MB）→ ${target.absolutePath}")
+        if (ModelStore.resolveFile(this, model) != null) {
+            append("模型已就绪，不用重新下载：${ModelStore.resolveFile(this, model)?.absolutePath}")
             return
         }
 
-        append("开始下载 ${model.fileName}（约 ${model.sizeMb} MB）…")
-        append("地址：${model.url}")
+        append("开始下载 ${model.fileName}（约 ${model.sizeMb} MB）")
         button.isEnabled = false
 
         Thread({
             var lastReportedMb = -1L
-            val ok = ModelStore.download(model, target) { done, total ->
-                if (done < 0) {
-                    append("下载失败：服务器返回异常状态码")
-                    return@download
-                }
-                val doneMb = done / (1024 * 1024)
-                if (doneMb != lastReportedMb) {
-                    lastReportedMb = doneMb
-                    val pct = if (total > 0) done * 100 / total else -1
-                    append(
-                        if (pct >= 0) "下载中 $pct%（${doneMb}MB / ${total / 1024 / 1024}MB）"
-                        else "下载中 ${doneMb}MB"
-                    )
-                }
-            }
+            val ok = ModelStore.download(
+                model = model,
+                target = target,
+                onProgress = { done, total ->
+                    val doneMb = done / (1024 * 1024)
+                    if (doneMb != lastReportedMb) {
+                        lastReportedMb = doneMb
+                        val pct = if (total > 0) done * 100 / total else -1
+                        append(
+                            if (pct >= 0) "下载中 $pct%（${doneMb}/${total / 1024 / 1024} MB）"
+                            else "下载中 ${doneMb} MB"
+                        )
+                    }
+                },
+                onLog = { line -> append(line) }
+            )
+
             if (ok) {
-                append("模型下载完成 ✅ 大小 ${ModelStore.sizeMb(this, model)} MB")
+                append("模型下载完成 ✅ ${ModelStore.sizeMb(target)} MB")
                 append("现在点第 5 步，识别会自动切到 whisper.cpp（离线）")
             } else {
-                append("模型下载失败 ❌ 检查网络后重试；也可以手动把 ${model.fileName} 放到上面那个目录")
+                append("下载失败 ❌ 两个源都不通。请改用「从文件导入模型」：")
+                append("  1) 电脑浏览器下载 ${model.fileName}（约 ${model.sizeMb} MB）")
+                append("  2) 用微信/数据线传到手机")
+                append("  3) 回本页点「从文件导入模型」选中它")
             }
             ui.post { button.isEnabled = true }
         }, "model-download").start()
+    }
+
+    private fun pickModelFile() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }
+        append("请选择模型文件（通常叫 ggml-tiny.bin / ggml-base.bin / ggml-small.bin）")
+        startActivityForResult(intent, REQ_IMPORT)
+    }
+
+    private fun importModel(uri: Uri) {
+        val model = currentModel()
+        val target = ModelStore.file(this, model)
+        append("开始导入到 ${target.absolutePath}")
+        Thread({
+            ModelStore.importFrom(this, uri, target) { line -> append(line) }
+            append("导入流程结束，可回主界面看「当前配置」确认是否就绪")
+        }, "model-import").start()
     }
 
     // ------------------------------------------------------------ 日志
@@ -205,5 +241,6 @@ class MainActivity : Activity() {
     private companion object {
         const val REQ_PERMISSIONS = 101
         const val REQ_CAPTURE = 102
+        const val REQ_IMPORT = 103
     }
 }

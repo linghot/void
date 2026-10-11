@@ -4,7 +4,8 @@
     <string name="header">手机内播放的音频 → 实时中文字幕</string>
     <string name="btn_permissions">1. 申请录音/通知权限</string>
     <string name="btn_overlay">2. 授予悬浮窗权限</string>
-    <string name="btn_model">3. 下载识别模型</string>
+    <string name="btn_model">3. 下载识别模型（含国内镜像）</string>
+    <string name="btn_import">3b. 从文件导入模型（下载不了就用这个）</string>
     <string name="btn_probe">4. 捕获探针自检（10 秒）</string>
     <string name="btn_interpret">5. 启动同传（离线识别）</string>
     <string name="btn_stop">6. 停止捕获 / 结束同传</string>
@@ -23,5 +24,5 @@
     <string name="settings_asr_model">识别模型（越大越准、越慢）</string>
     <string name="settings_asr_lang">源语言（已知语言写死更快更准）</string>
     <string name="settings_partial">边说边出临时字幕（延迟更低，CPU 占用更高）</string>
-    <string name="settings_footer">改完识别模型后，记得回主界面点第 3 步下载对应模型文件。</string>
+    <string name="settings_footer">改完识别模型后，回主界面点第 3 步下载、或第 3b 步从文件导入对应模型。</string>
 </resources>
