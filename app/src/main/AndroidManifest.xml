@@ -14,7 +14,7 @@
     <!-- Android 13+ 前台服务通知 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- 仅当翻译走"你的自建 API"时需要；纯离线模式可删掉 -->
+    <!-- 翻译走自建 API、下载识别模型都需要联网 -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
@@ -32,6 +32,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 设置页：翻译 API / 识别模型 -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="@string/settings_title" />
 
         <!-- 捕获 + 识别 + 翻译 + 字幕，全部在这个前台服务里跑 -->
         <service

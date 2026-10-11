@@ -4,8 +4,24 @@
     <string name="header">手机内播放的音频 → 实时中文字幕</string>
     <string name="btn_permissions">1. 申请录音/通知权限</string>
     <string name="btn_overlay">2. 授予悬浮窗权限</string>
-    <string name="btn_model">3. 下载识别模型（base ≈142MB）</string>
+    <string name="btn_model">3. 下载识别模型</string>
     <string name="btn_probe">4. 捕获探针自检（10 秒）</string>
     <string name="btn_interpret">5. 启动同传（离线识别）</string>
     <string name="btn_stop">6. 停止捕获 / 结束同传</string>
+    <string name="btn_settings">⚙ 设置（翻译 API / 识别模型）</string>
+
+    <string name="settings_title">设置</string>
+    <string name="settings_hint">翻译 API 填了才会真的翻译；不填则第二行与第一行相同（原文直通）。所有内容只保存在本机。</string>
+    <string name="settings_section_mt">翻译 API（OpenAI 兼容 /chat/completions）</string>
+    <string name="settings_base_url">接口地址（含 /v1）</string>
+    <string name="settings_model">模型名</string>
+    <string name="settings_api_key">API Key</string>
+    <string name="settings_prompt">翻译提示词</string>
+    <string name="settings_test">测试连接</string>
+    <string name="settings_save">保存</string>
+    <string name="settings_section_asr">识别</string>
+    <string name="settings_asr_model">识别模型（越大越准、越慢）</string>
+    <string name="settings_asr_lang">源语言（已知语言写死更快更准）</string>
+    <string name="settings_partial">边说边出临时字幕（延迟更低，CPU 占用更高）</string>
+    <string name="settings_footer">改完识别模型后，记得回主界面点第 3 步下载对应模型文件。</string>
 </resources>

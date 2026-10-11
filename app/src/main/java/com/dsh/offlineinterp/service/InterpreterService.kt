@@ -20,9 +20,12 @@ import com.dsh.offlineinterp.pipeline.AsrEngine
 import com.dsh.offlineinterp.pipeline.EnergySegmenter
 import com.dsh.offlineinterp.pipeline.ModelStore
 import com.dsh.offlineinterp.pipeline.NoopTranslator
+import com.dsh.offlineinterp.pipeline.Settings
+import com.dsh.offlineinterp.pipeline.StreamingTranscriber
 import com.dsh.offlineinterp.pipeline.StubAsrEngine
 import com.dsh.offlineinterp.pipeline.SubtitleOverlay
 import com.dsh.offlineinterp.pipeline.Translator
+import com.dsh.offlineinterp.pipeline.TranslatorFactory
 import com.dsh.offlineinterp.pipeline.WhisperAsrEngine
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -30,30 +33,29 @@ import java.util.concurrent.TimeUnit
 /**
  * 前台服务：捕获 → 切句 → 识别 → 翻译 → 悬浮字幕。
  *
- * **停止**（v0.3 新增）支持三种入口，都会走 [teardown] 干净收尾：
- *  1. App 界面上的「停止捕获」按钮 → [stop]
- *  2. 通知栏里的「停止同传」按钮 → ACTION_STOP
- *  3. 系统"屏幕共享中"提示里的「停止共享」→ MediaProjection 回调 onStop
+ * 识别引擎（[chooseAsr]）：设置页选的模型下载了就上 whisper.cpp，否则占位实现。
+ * 翻译引擎（[TranslatorFactory]）：设置页填了 API 就真翻译，否则原文直通。
+ * 临时字幕（[StreamingTranscriber]）：设置页可开关，开了就"边说边出"降低感知延迟。
  *
- * **为什么必须放在服务里**（Android 14 / API 34 的硬要求）：
- * 使用 MediaProjection 前，必须先启动 foregroundServiceType="mediaProjection"
- * 的前台服务并调用 startForeground()，然后才能 getMediaProjection()。
+ * 停止有三个入口，都会走 [teardown] 干净收尾：
+ *  1. App 界面按钮 → [stop]
+ *  2. 通知栏「停止同传」→ ACTION_STOP
+ *  3. 系统"停止共享"→ MediaProjection 回调 onStop
  */
 class InterpreterService : Service() {
 
     private val ui = Handler(Looper.getMainLooper())
     private val overlay by lazy { SubtitleOverlay(this) }
 
-    // 换成 OpenAiCompatTranslator(baseUrl, apiKey, model) 就能走你自己的 API
-    private val translator: Translator = NoopTranslator()
-
     private var asr: AsrEngine = StubAsrEngine()
+    private var translator: Translator = NoopTranslator()
 
     private val segmentQueue = LinkedBlockingQueue<ShortArray>()
 
     private var projection: MediaProjection? = null
     private var capture: AppAudioCapture? = null
     private var segmenter: EnergySegmenter? = null
+    private var streaming: StreamingTranscriber? = null
     private var worker: Thread? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -65,7 +67,7 @@ class InterpreterService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
 
-        // 停止指令优先处理：此时不需要前台服务，也不需要授权数据
+        // 停止指令优先处理：不需要前台服务，也不需要授权数据
         if (intent?.action == ACTION_STOP) {
             notifyLog("收到停止指令，正在结束捕获…")
             teardown()
@@ -106,7 +108,6 @@ class InterpreterService : Service() {
         }
 
         projection = mp
-        // 注册回调：用户在系统提示里点「停止共享」时会走到这里
         mp.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
                 notifyLog("系统结束了屏幕共享")
@@ -153,13 +154,24 @@ class InterpreterService : Service() {
         }
         overlay.show()
 
+        // 引擎按设置页的配置来选
         asr = chooseAsr()
+        translator = TranslatorFactory.create(this)
         val asrReady = asr.prepare()
+
+        notifyLog(
+            "识别：${asr.name}（就绪=$asrReady）｜ 翻译：${translator.name} ｜ " +
+                "语言：${Settings.asrLanguage(this)} ｜ 临时字幕：${if (Settings.partialEnabled(this)) "开" else "关"}"
+        )
+        if (!Settings.translatorReady(this)) {
+            notifyLog("提示：翻译 API 未配置，字幕第二行会与第一行相同（设置页可填）")
+        }
+
         overlay.setText(
             if (asrReady) {
                 "识别：${asr.name}\n翻译：${translator.name}\n正在等待语音…"
             } else {
-                "识别模型不可用（请先回 App 点第 3 步下载）\n当前为占位识别，不会出真字幕"
+                "识别模型不可用（请回 App 点第 3 步下载）\n当前为占位识别，不会出真字幕"
             }
         )
 
@@ -168,35 +180,50 @@ class InterpreterService : Service() {
 
         capture = AppAudioCapture(
             projection = mp,
-            onPcm16k = { pcm -> segmenter?.accept(pcm) },
+            onPcm16k = { pcm ->
+                segmenter?.accept(pcm)
+                streaming?.accept(pcm)
+            },
             onError = { message -> overlay.setText("捕获错误：$message") }
         ).also { it.start() }
 
         notifyLog("同传已启动。停止方式：① 本页按钮 ② 通知栏「停止同传」 ③ 系统「停止共享」")
     }
 
-    /**
-     * 选识别引擎：模型就绪就用 whisper.cpp，否则退回占位实现。
-     * 想换模型 / 换线程数 / 换语言，改这几个常量即可。
-     */
+    /** 按设置页选的模型挑识别引擎：文件在就用 whisper，否则占位 */
     private fun chooseAsr(): AsrEngine {
-        val model = ModelStore.DEFAULT
+        val id = Settings.asrModelId(this)
+        val model = ModelStore.MODELS.firstOrNull { it.id == id } ?: ModelStore.DEFAULT
         if (!ModelStore.isReady(this, model)) return StubAsrEngine()
         return WhisperAsrEngine(
             modelPath = ModelStore.file(this, model).absolutePath,
             threads = WHISPER_THREADS,
-            language = ASR_LANGUAGE
+            language = Settings.asrLanguage(this)
         )
     }
 
     private fun startWorker() {
+        // 边说边出：设了开关才启用（CPU 换取低延迟）
+        streaming = if (Settings.partialEnabled(this)) {
+            StreamingTranscriber(asr, onPartial = { partial -> overlay.setText("〔识别中〕$partial") })
+        } else {
+            null
+        }
+
         worker = Thread({
             while (!Thread.currentThread().isInterrupted) {
+
+                // 每 200ms 检查一次是否需要出临时字幕
+                streaming?.maybeRunPartial()
+
                 val segment = try {
-                    segmentQueue.poll(1, TimeUnit.SECONDS)
+                    segmentQueue.poll(200, TimeUnit.MILLISECONDS)
                 } catch (_: InterruptedException) {
                     null
                 } ?: continue
+
+                // 这一句交给最终识别，窗口清空避免重复
+                streaming?.clear()
 
                 val startedAt = System.currentTimeMillis()
                 val sourceText = try {
@@ -224,16 +251,14 @@ class InterpreterService : Service() {
 
     // ---------------------------------------------------------------- 收尾
 
-    /**
-     * 一次性把捕获、切句、识别、悬浮窗、投影全部关掉。
-     * 可重复调用（所有引用先置空再释放，不会递归）。
-     */
     private fun teardown() {
         capture?.stop()
         capture = null
 
         segmenter?.flush()
         segmenter = null
+
+        streaming = null
 
         worker?.interrupt()
         worker = null
@@ -286,12 +311,10 @@ class InterpreterService : Service() {
     private fun buildNotification(text: String): Notification {
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
 
-        // 点通知正文 → 打开 App（里面就有停止按钮）
         val openIntent = Intent(this, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val openPending = PendingIntent.getActivity(this, REQ_OPEN, openIntent, flags)
 
-        // 通知上的「停止同传」按钮 → 直接停
         val stopIntent = Intent(this, InterpreterService::class.java).setAction(ACTION_STOP)
         val stopPending = PendingIntent.getService(this, REQ_STOP, stopIntent, flags)
 
@@ -320,13 +343,8 @@ class InterpreterService : Service() {
         const val EXTRA_RESULT_DATA = "extra_result_data"
         const val EXTRA_MODE = "extra_mode"
 
-        /** 只跑捕获探针 */
         const val MODE_PROBE = "probe"
-
-        /** 跑完整同传管线 */
         const val MODE_INTERPRET = "interpret"
-
-        /** 停止捕获的指令 */
         const val ACTION_STOP = "com.dsh.offlineinterp.action.STOP"
 
         private const val CHANNEL_ID = "offline_interp"
@@ -339,26 +357,16 @@ class InterpreterService : Service() {
         /** whisper 推理线程数：一般取大核数量，4~6 之间 */
         private const val WHISPER_THREADS = 4
 
-        /**
-         * 识别语言："auto" 自动检测；已知源语言就写死（"zh" / "en" / "ja"），
-         * 能省掉检测开销，也更稳。
-         */
-        private const val ASR_LANGUAGE = "auto"
-
-        /** 服务是否在运行（界面用来显示状态、启用/禁用按钮） */
         @Volatile
         var isRunning: Boolean = false
             private set
 
-        /** 日志回传通道（界面设进来） */
         @Volatile
         var logListener: ((String) -> Unit)? = null
 
-        /** 运行状态变化回调（true=捕获中，false=已停止） */
         @Volatile
         var stateListener: ((Boolean) -> Unit)? = null
 
-        /** 开始：需要把 MediaProjection 的授权结果一起带进去 */
         fun start(context: Context, resultCode: Int, resultData: Intent, mode: String) {
             val intent = Intent(context, InterpreterService::class.java)
                 .putExtra(EXTRA_RESULT_CODE, resultCode)
@@ -367,13 +375,11 @@ class InterpreterService : Service() {
             context.startForegroundService(intent)
         }
 
-        /** 停止：App 界面按钮调用 */
         fun stop(context: Context) {
             val intent = Intent(context, InterpreterService::class.java).setAction(ACTION_STOP)
             try {
                 context.startService(intent)
             } catch (t: Throwable) {
-                // 极端情况（服务已被系统回收）时直接兜底
                 isRunning = false
                 stateListener?.invoke(false)
             }

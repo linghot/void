@@ -10,22 +10,20 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.provider.Settings
+import android.provider.Settings as AndroidSettings
 import android.widget.Button
 import android.widget.TextView
 import com.dsh.offlineinterp.pipeline.ModelStore
+import com.dsh.offlineinterp.pipeline.Settings
 import com.dsh.offlineinterp.service.InterpreterService
 
 /**
- * 入口界面。6 步：权限 → 悬浮窗 → 下载模型 → 探针自检 → 启动同传 → **停止**。
+ * 入口界面。6 步 + 设置页。
  *
- * 设计要点：
- * 1. 探针与正式管线都交给 [InterpreterService] 执行 —— Android 14 起，
- *    使用 MediaProjection 必须先在 mediaProjection 类型的前台服务里 startForeground()，
- *    再调用 getMediaProjection()。
- * 2. 停止有三个入口（本页按钮 / 通知栏按钮 / 系统"停止共享"），
- *    状态由 [InterpreterService.stateListener] 回传，按钮会自动启用禁用。
- * 3. 刻意不引入 AndroidX（平台 Activity + startActivityForResult），保持零依赖。
+ * 停止有三个入口（本页按钮 / 通知栏按钮 / 系统"停止共享"），
+ * 状态由 [InterpreterService.stateListener] 回传，按钮自动启用禁用。
+ *
+ * 翻译与识别参数都在 [SettingsActivity] 里配，存在手机本地。
  */
 class MainActivity : Activity() {
 
@@ -42,38 +40,32 @@ class MainActivity : Activity() {
         log = findViewById(R.id.log)
         projectionManager = getSystemService(MediaProjectionManager::class.java)
 
-        // 服务 → 界面的两条通道
         InterpreterService.logListener = { line -> append(line) }
         InterpreterService.stateListener = { running -> ui.post { applyRunningState(running) } }
 
-        append("离线同传 · v0.3（已修复：无法停止捕获）")
+        append("离线同传 · v0.4（翻译 API 设置页 + 边说边出）")
         append("顺序：1 权限 → 2 悬浮窗 → 3 下载模型 → 4 探针 → 5 启动 → 6 停止")
         append("停止有三种方式：① 本页第 6 步  ② 通知栏「停止同传」  ③ 系统「停止共享」")
-        append("")
-
-        val model = ModelStore.DEFAULT
-        if (ModelStore.isReady(this, model)) {
-            append("识别模型：已就绪（${model.fileName}，${ModelStore.sizeMb(this, model)} MB）")
-        } else {
-            append("识别模型：未下载 —— 不下载的话只能跑占位识别")
-        }
-        append("模型目录：${ModelStore.dir(this).absolutePath}")
         append("")
 
         findViewById<Button>(R.id.btnPermissions).setOnClickListener { requestRuntimePermissions() }
 
         findViewById<Button>(R.id.btnOverlay).setOnClickListener {
-            if (Settings.canDrawOverlays(this)) {
+            if (AndroidSettings.canDrawOverlays(this)) {
                 append("悬浮窗权限：已具备")
             } else {
                 append("请在系统页面里允许「显示在其他应用上层」")
                 startActivity(
                     Intent(
-                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        AndroidSettings.ACTION_MANAGE_OVERLAY_PERMISSION,
                         Uri.parse("package:$packageName")
                     )
                 )
             }
+        }
+
+        findViewById<Button>(R.id.btnSettings).setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
         }
 
         findViewById<Button>(R.id.btnModel).setOnClickListener { downloadModel() }
@@ -94,7 +86,34 @@ class MainActivity : Activity() {
         applyRunningState(InterpreterService.isRunning)
     }
 
-    /** 按运行状态启用/禁用按钮，避免重复点击 */
+    /** 从设置页回来时刷新模型/翻译状态显示 */
+    override fun onResume() {
+        super.onResume()
+        refreshConfigSummary()
+    }
+
+    private fun currentModel(): ModelStore.Model {
+        val id = Settings.asrModelId(this)
+        return ModelStore.MODELS.firstOrNull { it.id == id } ?: ModelStore.DEFAULT
+    }
+
+    private fun refreshConfigSummary() {
+        val model = currentModel()
+        val modelState = if (ModelStore.isReady(this, model)) {
+            "已下载（${ModelStore.sizeMb(this, model)} MB）"
+        } else {
+            "未下载 —— 点第 3 步"
+        }
+        val mtState = if (Settings.translatorReady(this)) {
+            "已配置（${Settings.mtModel(this)}）"
+        } else {
+            "未配置 —— 当前原文直通，去设置页填"
+        }
+        append("当前配置：识别=${model.id}·$modelState ｜ 语言=${Settings.asrLanguage(this)} ｜ 翻译=$mtState")
+        append("模型目录：${ModelStore.dir(this).absolutePath}")
+    }
+
+    /** 按运行状态启用/禁用按钮 */
     private fun applyRunningState(running: Boolean) {
         findViewById<Button>(R.id.btnStop).isEnabled = running
         findViewById<Button>(R.id.btnProbe).isEnabled = !running
@@ -112,7 +131,6 @@ class MainActivity : Activity() {
         requestPermissions(need.toTypedArray(), REQ_PERMISSIONS)
     }
 
-    /** 申请录屏授权；授权结果在 onActivityResult 里交给服务处理 */
     private fun launchCapture(mode: String) {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             append("还没有录音权限，请先点第 1 步")
@@ -138,7 +156,7 @@ class MainActivity : Activity() {
     // ------------------------------------------------------------ 模型下载
 
     private fun downloadModel() {
-        val model = ModelStore.DEFAULT
+        val model = currentModel()
         val target = ModelStore.file(this, model)
         val button = findViewById<Button>(R.id.btnModel)
 
