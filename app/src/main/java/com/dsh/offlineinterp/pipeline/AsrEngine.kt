@@ -16,6 +16,12 @@ interface AsrEngine {
     /** 识别一段音频（同步阻塞，调用方负责放在工作线程） */
     fun transcribe(pcm16k: ShortArray): String
 
+    /**
+     * 短窗口"临时识别"（边说边出用）。默认等同 [transcribe]；
+     * 流式引擎实现它可以让临时结果走更轻量/更保守的解码路径。
+     */
+    fun transcribePartial(pcm16k: ShortArray): String = transcribe(pcm16k)
+
     fun release() {}
 
     /** 这段音频对应多少毫秒 */

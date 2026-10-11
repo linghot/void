@@ -4,16 +4,14 @@ package com.dsh.offlineinterp.pipeline
  * 真识别引擎：whisper.cpp（完全离线，纯 CPU）。
  *
  * 依赖两样东西，缺一样 [prepare] 就返回 false，管线会自动退回占位实现：
- *   1. 原生库 libwhisper_jni.so —— 由 app/src/main/cpp/ 编译产生，见 CMakeLists.txt
- *   2. 模型文件（如 ggml-base.bin）—— 用 [ModelStore] 下载或手动放进手机
+ *   1. 原生库 libwhisper_jni.so —— 由 app/src/main/cpp/ 编译产生
+ *   2. 模型文件（如 ggml-base.bin）—— 用 [ModelStore] 下载/导入
  *
- * 参数说明：
- *   threads  —— 线程数，一般取 CPU 大核数量（4~6）。多了反而抢资源。
- *   language —— "auto" 自动检测；已知语言时写死（如 "zh"）能更快更稳。
+ * v0.6 起区分两种用法：
+ *   [transcribe]        最终识别：整句，允许模型切多段
+ *   [transcribePartial] 临时识别：短窗口，强制单段（防止反复吐同一句）
  *
- * 注意：whisper 不是流式模型，必须由 Segmenter 切好句子整段送来。
- * 因此端到端延迟 ≈ 静音判定等待 + 推理时间。想要更低延迟请看
- * docs/M2-接入识别模型.md 里的 sherpa-onnx 流式方案。
+ * 防重复的关键在原生层（no_context / temperature_inc / suppress_blank），见 whisper_jni.cpp。
  */
 class WhisperAsrEngine(
     private val modelPath: String,
@@ -38,12 +36,16 @@ class WhisperAsrEngine(
         return loaded
     }
 
-    override fun transcribe(pcm16k: ShortArray): String {
+    override fun transcribe(pcm16k: ShortArray): String = run(pcm16k, singleSegment = false)
+
+    override fun transcribePartial(pcm16k: ShortArray): String = run(pcm16k, singleSegment = true)
+
+    private fun run(pcm16k: ShortArray, singleSegment: Boolean): String {
         if (!loaded || pcm16k.isEmpty()) return ""
-        // whisper 要的是 -1.0 ~ 1.0 的 float，这里做一次转换
+        // whisper 要的是 -1.0 ~ 1.0 的 float
         val f = FloatArray(pcm16k.size) { pcm16k[it] / 32768.0f }
         return try {
-            nativeTranscribe(f, threads, language, false).trim()
+            nativeTranscribe(f, threads, language, false, singleSegment).trim()
         } catch (t: Throwable) {
             ""
         }
@@ -64,7 +66,8 @@ class WhisperAsrEngine(
         samples: FloatArray,
         threads: Int,
         language: String,
-        translate: Boolean
+        translate: Boolean,
+        singleSegment: Boolean
     ): String
 
     private external fun nativeFree()

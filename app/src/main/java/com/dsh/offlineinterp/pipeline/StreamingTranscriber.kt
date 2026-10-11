@@ -35,6 +35,7 @@ class StreamingTranscriber(
     private var filled = 0
     private var dirty = false
     private var lastRunAt = 0L
+    private var lastText = ""
 
     /** 采集线程调用：把新音频并进窗口 */
     fun accept(pcm: ShortArray) {
@@ -60,6 +61,7 @@ class StreamingTranscriber(
         synchronized(lock) {
             filled = 0
             dirty = false
+            lastText = ""
         }
     }
 
@@ -77,11 +79,18 @@ class StreamingTranscriber(
         }
 
         val text = try {
-            asr.transcribe(snapshot).trim()
+            asr.transcribePartial(snapshot).trim()
         } catch (_: Throwable) {
             ""
         }
-        if (text.isNotEmpty()) onPartial(text)
+        if (text.isEmpty()) return
+
+        // 再兜一层：结果和上次一模一样就不刷屏（whisper 偶尔会重复吐同一句）
+        synchronized(lock) {
+            if (text == lastText) return
+            lastText = text
+        }
+        onPartial(text)
     }
 
     /** 粗略的能量判断，避免对纯静音/纯音乐跑推理 */

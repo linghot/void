@@ -178,7 +178,13 @@ class InterpreterService : Service() {
             }
         )
 
-        segmenter = EnergySegmenter(onSegment = { segment -> segmentQueue.offer(segment) })
+        segmenter = EnergySegmenter(onSegment = { segment ->
+            // 落后太多就丢掉最旧的：宁可漏一句，也不要越堆越卡
+            while (segmentQueue.size >= MAX_QUEUE) {
+                segmentQueue.poll()
+            }
+            segmentQueue.offer(segment)
+        })
         startWorker()
 
         capture = AppAudioCapture(
@@ -221,10 +227,14 @@ class InterpreterService : Service() {
         }
 
         worker = Thread({
+            var count = 0
             while (!Thread.currentThread().isInterrupted) {
 
-                // 每 200ms 检查一次是否需要出临时字幕
-                streaming?.maybeRunPartial()
+                // 最终识别优先：只有队列空了才做临时识别，
+                // 否则"临时"会把"最终"挤死，表现就是字幕卡住不动
+                if (segmentQueue.isEmpty()) {
+                    streaming?.maybeRunPartial()
+                }
 
                 val segment = try {
                     segmentQueue.poll(200, TimeUnit.MILLISECONDS)
@@ -235,25 +245,28 @@ class InterpreterService : Service() {
                 // 这一句交给最终识别，窗口清空避免重复
                 streaming?.clear()
 
-                val startedAt = System.currentTimeMillis()
+                val asrStart = System.currentTimeMillis()
                 val sourceText = try {
                     asr.transcribe(segment)
                 } catch (t: Throwable) {
                     "[识别失败 ${t.javaClass.simpleName}]"
                 }
+                val asrCost = System.currentTimeMillis() - asrStart
                 if (sourceText.isBlank()) continue
-                val asrCost = System.currentTimeMillis() - startedAt
 
+                val mtStart = System.currentTimeMillis()
                 val translated = try {
                     translator.translate(sourceText)
                 } catch (t: Throwable) {
                     sourceText
                 }
+                val mtCost = System.currentTimeMillis() - mtStart
+                count++
 
                 val audioMs = segment.size * 1000 / SAMPLE_RATE
                 overlay.setText(
                     "$sourceText\n$translated\n" +
-                        "(${audioMs}ms 音频 · 识别 ${asrCost}ms · ${asr.name} · ${translator.name})"
+                        "#$count (${audioMs}ms 音频 · 识别 ${asrCost}ms · 翻译 ${mtCost}ms · 待处理 ${segmentQueue.size})"
                 )
             }
         }, "interp-worker").also { it.start() }
@@ -363,6 +376,9 @@ class InterpreterService : Service() {
         private const val SAMPLE_RATE = 16_000
         private const val REQ_OPEN = 101
         private const val REQ_STOP = 102
+
+        /** 待识别的句子最多排这么多，超了就丢最旧的 */
+        private const val MAX_QUEUE = 3
 
         /** whisper 推理线程数：一般取大核数量，4~6 之间 */
         private const val WHISPER_THREADS = 4
