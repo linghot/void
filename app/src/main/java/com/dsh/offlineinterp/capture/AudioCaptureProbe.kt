@@ -43,7 +43,9 @@ class AudioCaptureProbe(private val projection: MediaProjection) {
         val rms: Double,
         val nonSilentRatio: Double,
         val verdict: Verdict,
-        val hint: String
+        val hint: String,
+        /** 贴满量程的采样占比。>1% 说明源音量太大被削波，会明显拉低识别准确率 */
+        val clippedRatio: Double = 0.0
     )
 
     fun run(seconds: Int, onProgress: (String) -> Unit = {}): Result {
@@ -65,6 +67,7 @@ class AudioCaptureProbe(private val projection: MediaProjection) {
         var peak = 0
         var sumSquares = 0.0
         var nonSilentFrames = 0
+        var clippedFrames = 0
 
         try {
             record.startRecording()
@@ -82,6 +85,7 @@ class AudioCaptureProbe(private val projection: MediaProjection) {
                     if (a > peak) peak = a
                     sumSquares += v.toDouble() * v
                     if (a > SILENCE_THRESHOLD) nonSilentFrames++
+                    if (a >= CLIP_THRESHOLD) clippedFrames++
                 }
                 frames += n
                 read += n
@@ -107,13 +111,21 @@ class AudioCaptureProbe(private val projection: MediaProjection) {
 
         val rms = sqrt(sumSquares / frames)
         val ratio = nonSilentFrames.toDouble() / frames
+        val clippedRatio = clippedFrames.toDouble() / frames
         val verdict = if (peak > SILENCE_THRESHOLD && ratio > NON_SILENT_RATIO_MIN) {
             Verdict.CAPTURABLE
         } else {
             Verdict.SILENT_OR_BLOCKED
         }
 
-        return Result(frames, peak, rms, ratio, verdict, hintFor(verdict))
+        val hint = if (verdict == Verdict.CAPTURABLE && clippedRatio > CLIP_RATIO_WARN) {
+            hintFor(verdict) + " ⚠ 但检测到削波（${"%.1f%%".format(clippedRatio * 100)}）：" +
+                "把手机音量降到 60~70% 再跑一次，削波会明显拉低识别准确率。"
+        } else {
+            hintFor(verdict)
+        }
+
+        return Result(frames, peak, rms, ratio, verdict, hint, clippedRatio)
     }
 
     private fun buildRecord(): AudioRecord {
@@ -165,5 +177,11 @@ class AudioCaptureProbe(private val projection: MediaProjection) {
 
         /** 非静音采样占比低于此值就认为整体静音 */
         const val NON_SILENT_RATIO_MIN = 0.02
+
+        /** 判定"削波"的幅度门槛（int16 满量程 32767，这里取 32700） */
+        const val CLIP_THRESHOLD = 32_700
+
+        /** 削波占比高于此值就提示用户调小音量 */
+        const val CLIP_RATIO_WARN = 0.01
     }
 }

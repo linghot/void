@@ -25,6 +25,12 @@
         android:text="@string/btn_overlay" />
 
     <Button
+        android:id="@+id/btnModel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/btn_model" />
+
+    <Button
         android:id="@+id/btnProbe"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

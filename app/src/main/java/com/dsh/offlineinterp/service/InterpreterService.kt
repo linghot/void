@@ -16,24 +16,27 @@ import com.dsh.offlineinterp.capture.AppAudioCapture
 import com.dsh.offlineinterp.capture.AudioCaptureProbe
 import com.dsh.offlineinterp.pipeline.AsrEngine
 import com.dsh.offlineinterp.pipeline.EnergySegmenter
+import com.dsh.offlineinterp.pipeline.ModelStore
 import com.dsh.offlineinterp.pipeline.NoopTranslator
 import com.dsh.offlineinterp.pipeline.StubAsrEngine
 import com.dsh.offlineinterp.pipeline.SubtitleOverlay
 import com.dsh.offlineinterp.pipeline.Translator
+import com.dsh.offlineinterp.pipeline.WhisperAsrEngine
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /**
  * 前台服务：捕获 → 切句 → 识别 → 翻译 → 悬浮字幕，全在这里跑。
  *
- * **为什么必须放在服务里**（这是 Android 14 / API 34 的硬要求）：
+ * **为什么必须放在服务里**（Android 14 / API 34 的硬要求）：
  * 使用 MediaProjection 前，必须先启动一个 foregroundServiceType="mediaProjection"
  * 的前台服务并调用 startForeground()，然后才能 getMediaProjection()，
  * 否则会抛 SecurityException。所以授权结果是从 Activity 传进来、在这里消费的。
  *
  * 两种模式：
- *  - [MODE_PROBE]：只跑 10 秒捕获探针，回答"这个 App 的音频抓不抓得到"
- *  - [MODE_INTERPRET]：跑完整管线（当前 ASR/翻译是占位实现，用于验证链路）
+ *  - [MODE_PROBE]：只跑捕获探针，回答"这个 App 的音频抓不抓得到"
+ *  - [MODE_INTERPRET]：跑完整管线。识别引擎按 [chooseAsr] 自动选择：
+ *      模型就绪 → whisper.cpp 离线识别；否则退回占位实现（保证不崩）
  */
 class InterpreterService : Service() {
 
@@ -43,8 +46,7 @@ class InterpreterService : Service() {
     // 换成 OpenAiCompatTranslator(baseUrl, apiKey, model) 就能走你自己的 API
     private val translator: Translator = NoopTranslator()
 
-    // 换成 WhisperAsrEngine / SherpaOnnxAsrEngine 即可接入真模型
-    private val asr: AsrEngine = StubAsrEngine()
+    private var asr: AsrEngine = StubAsrEngine()
 
     private val segmentQueue = LinkedBlockingQueue<ShortArray>()
 
@@ -110,7 +112,7 @@ class InterpreterService : Service() {
     // ---------------------------------------------------------------- 探针模式
 
     private fun runProbe(mp: MediaProjection) {
-        notifyProbe("开始 10 秒探针，请确认目标 App 正在出声…")
+        notifyProbe("开始 ${PROBE_SECONDS} 秒探针，请确认目标 App 正在出声…")
         Thread({
             val result = AudioCaptureProbe(mp).run(PROBE_SECONDS) { line -> notifyProbe(line) }
             notifyProbe("")
@@ -118,6 +120,7 @@ class InterpreterService : Service() {
             notifyProbe("采样帧数：${result.frames}")
             notifyProbe("峰值：${result.peak}   RMS：${"%.1f".format(result.rms)}")
             notifyProbe("非静音占比：${"%.2f%%".format(result.nonSilentRatio * 100)}")
+            notifyProbe("削波占比：${"%.2f%%".format(result.clippedRatio * 100)}")
             notifyProbe("判定：${result.verdict}")
             notifyProbe("提示：${result.hint}")
             try {
@@ -132,14 +135,19 @@ class InterpreterService : Service() {
 
     private fun runPipeline(mp: MediaProjection) {
         if (!overlay.canDraw()) {
-            notifyProbe("提示：没有悬浮窗权限，字幕将不可见（只会在通知里跑）")
+            notifyProbe("提示：没有悬浮窗权限，字幕将不可见")
         }
         overlay.show()
-        overlay.setText("正在准备…")
 
-        if (!asr.prepare()) {
-            overlay.setText("ASR 不可用，降级为占位识别")
-        }
+        asr = chooseAsr()
+        val asrReady = asr.prepare()
+        overlay.setText(
+            if (asrReady) {
+                "识别：${asr.name}\n翻译：${translator.name}\n正在等待语音…"
+            } else {
+                "识别模型不可用（请先点第 3 步下载）\n当前为占位识别，不会出真字幕"
+            }
+        )
 
         segmenter = EnergySegmenter(onSegment = { segment -> segmentQueue.offer(segment) })
         startWorker()
@@ -149,8 +157,20 @@ class InterpreterService : Service() {
             onPcm16k = { pcm -> segmenter?.accept(pcm) },
             onError = { message -> overlay.setText("捕获错误：$message") }
         ).also { it.start() }
+    }
 
-        overlay.setText("已开始捕获，等待语音…（当前 ASR=占位，翻译=占位）")
+    /**
+     * 选识别引擎：模型就绪就用 whisper.cpp，否则退回占位实现。
+     * 想换模型 / 换线程数 / 换语言，改这几个常量即可。
+     */
+    private fun chooseAsr(): AsrEngine {
+        val model = ModelStore.DEFAULT
+        if (!ModelStore.isReady(this, model)) return StubAsrEngine()
+        return WhisperAsrEngine(
+            modelPath = ModelStore.file(this, model).absolutePath,
+            threads = WHISPER_THREADS,
+            language = ASR_LANGUAGE
+        )
     }
 
     private fun startWorker() {
@@ -162,12 +182,14 @@ class InterpreterService : Service() {
                     null
                 } ?: continue
 
+                val startedAt = System.currentTimeMillis()
                 val sourceText = try {
                     asr.transcribe(segment)
                 } catch (t: Throwable) {
                     "[识别失败 ${t.javaClass.simpleName}]"
                 }
                 if (sourceText.isBlank()) continue
+                val asrCost = System.currentTimeMillis() - startedAt
 
                 val translated = try {
                     translator.translate(sourceText)
@@ -175,8 +197,11 @@ class InterpreterService : Service() {
                     sourceText
                 }
 
-                val ms = segment.size * 1000 / SAMPLE_RATE
-                overlay.setText("$sourceText\n$translated\n(${ms}ms · asr=${asr.name} · mt=${translator.name})")
+                val audioMs = segment.size * 1000 / SAMPLE_RATE
+                overlay.setText(
+                    "$sourceText\n$translated\n" +
+                        "(${audioMs}ms 音频 · 识别 ${asrCost}ms · ${asr.name} · ${translator.name})"
+                )
             }
         }, "interp-worker").also { it.start() }
     }
@@ -241,6 +266,15 @@ class InterpreterService : Service() {
         private const val NOTIFICATION_ID = 42
         private const val PROBE_SECONDS = 10
         private const val SAMPLE_RATE = 16_000
+
+        /** whisper 推理线程数：一般取大核数量，4~6 之间 */
+        private const val WHISPER_THREADS = 4
+
+        /**
+         * 识别语言："auto" 自动检测；已知源语言就写死（"zh" / "en" / "ja"），
+         * 能省掉检测开销，也更稳。
+         */
+        private const val ASR_LANGUAGE = "auto"
 
         /** 探针进度回传通道（骨架简化：Activity 设进来，服务往里推） */
         @Volatile

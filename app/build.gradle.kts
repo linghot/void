@@ -7,18 +7,42 @@ android {
     namespace = "com.dsh.offlineinterp"
     compileSdk = 34
 
+    // whisper.cpp 需要 NDK 编译。这个版本号必须与构建机上实际安装的 NDK 一致；
+    // CI 由 workflow 用 sdkmanager 安装，本地用 Android Studio 的 SDK Manager 装。
+    ndkVersion = "26.1.10909125"
+
     defaultConfig {
         applicationId = "com.dsh.offlineinterp"
         // AudioPlaybackCapture 从 Android 10 (API 29) 才有，低于此版本无解
         minSdk = 29
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1-m0"
+        versionCode = 2
+        versionName = "0.2-m2"
+
+        ndk {
+            // 只打主流真机架构。要用模拟器就再加上 "x86_64"
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+
+        externalNativeBuild {
+            cmake {
+                arguments += listOf("-DANDROID_STL=c++_shared")
+                cppFlags += "-O3"
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            // 构建时会用 FetchContent 拉取 whisper.cpp 源码（需要网络）
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
         }
     }
 
@@ -31,15 +55,19 @@ android {
         jvmTarget = "17"
     }
 
-    // 骨架阶段不启任何可选特性，尽量降低构建门槛
     buildFeatures {
         viewBinding = false
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
     }
 }
 
 dependencies {
-    // 刻意保持零依赖：只用平台 API（Activity / Notification / HttpURLConnection）
-    // 接入 ASR 原生库时，在这里加：
-    //   implementation(files("libs/sherpa-onnx.aar"))
-    // 或接入 AndroidX 时再加（并同步把 gradle.properties 的 useAndroidX 打开）
+    // 依然是零第三方依赖：
+    // 识别 = CMake 编进来的 whisper.cpp（离线）
+    // 翻译 = HttpURLConnection 直连你自己的 API
 }

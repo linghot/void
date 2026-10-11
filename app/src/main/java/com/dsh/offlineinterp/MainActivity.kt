@@ -13,23 +13,25 @@ import android.os.Looper
 import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
+import com.dsh.offlineinterp.pipeline.ModelStore
 import com.dsh.offlineinterp.service.InterpreterService
 
 /**
- * M0 入口界面。
+ * 入口界面。5 步：权限 → 悬浮窗 → 下载模型 → 探针自检 → 启动同传。
  *
  * 设计要点：
- * 1. 探针与正式管线都交给 [InterpreterService] 执行 —— 因为 Android 14 起，
+ * 1. 探针与正式管线都交给 [InterpreterService] 执行 —— Android 14 起，
  *    使用 MediaProjection 必须先在 mediaProjection 类型的前台服务里 startForeground()，
- *    再调用 getMediaProjection()。放在 Activity 里做会在新系统上抛 SecurityException。
- * 2. 本类刻意不引入 AndroidX（用平台 Activity + startActivityForResult），
- *    以便在没有网络的环境里也能构建。
+ *    再调用 getMediaProjection()；放在 Activity 里做会在新系统上抛 SecurityException。
+ * 2. 刻意不引入 AndroidX（平台 Activity + startActivityForResult），保持零依赖。
  */
 class MainActivity : Activity() {
 
     private val ui = Handler(Looper.getMainLooper())
     private lateinit var log: TextView
     private lateinit var projectionManager: MediaProjectionManager
+
+    private var pendingMode: String = InterpreterService.MODE_PROBE
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,9 +43,17 @@ class MainActivity : Activity() {
         // 让服务里的探针进度能回到这个界面（骨架用的简易通道）
         InterpreterService.probeListener = { line -> append(line) }
 
-        append("离线同传 · M0 捕获探针")
-        append("顺序：授权 → 悬浮窗 → 让目标 App 出声 → 开始探针")
-        append("若探针全程 RMS≈0 而目标 App 明明在响，说明该 App 禁止被捕获。")
+        append("离线同传 · M2 离线识别版")
+        append("顺序：1 权限 → 2 悬浮窗 → 3 下载模型 → 4 探针自检 → 5 启动同传")
+        append("")
+
+        val model = ModelStore.DEFAULT
+        if (ModelStore.isReady(this, model)) {
+            append("识别模型：已就绪（${model.fileName}，${ModelStore.sizeMb(this, model)} MB）")
+        } else {
+            append("识别模型：未下载 —— 不下载的话只能跑占位识别")
+        }
+        append("模型目录：${ModelStore.dir(this).absolutePath}")
         append("")
 
         findViewById<Button>(R.id.btnPermissions).setOnClickListener { requestRuntimePermissions() }
@@ -62,6 +72,8 @@ class MainActivity : Activity() {
             }
         }
 
+        findViewById<Button>(R.id.btnModel).setOnClickListener { downloadModel() }
+
         findViewById<Button>(R.id.btnProbe).setOnClickListener {
             launchCapture(InterpreterService.MODE_PROBE)
         }
@@ -70,6 +82,8 @@ class MainActivity : Activity() {
             launchCapture(InterpreterService.MODE_INTERPRET)
         }
     }
+
+    // ------------------------------------------------------------ 权限与授权
 
     private fun requestRuntimePermissions() {
         val need = mutableListOf(Manifest.permission.RECORD_AUDIO)
@@ -90,9 +104,6 @@ class MainActivity : Activity() {
         startActivityForResult(projectionManager.createScreenCaptureIntent(), REQ_CAPTURE)
     }
 
-    private var pendingMode: String = InterpreterService.MODE_PROBE
-
-    // 平台 Activity 的旧式回调。骨架阶段故意不用 AndroidX 的 ActivityResultContracts。
     @Suppress("DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -104,6 +115,51 @@ class MainActivity : Activity() {
         append("已获得录屏授权，交给前台服务执行（模式=$pendingMode）")
         InterpreterService.start(this, resultCode, data, pendingMode)
     }
+
+    // ------------------------------------------------------------ 模型下载
+
+    private fun downloadModel() {
+        val model = ModelStore.DEFAULT
+        val target = ModelStore.file(this, model)
+        val button = findViewById<Button>(R.id.btnModel)
+
+        if (ModelStore.isReady(this, model)) {
+            append("模型已就绪：${model.fileName}（${ModelStore.sizeMb(this, model)} MB）→ ${target.absolutePath}")
+            return
+        }
+
+        append("开始下载 ${model.fileName}（约 ${model.sizeMb} MB）…")
+        append("地址：${model.url}")
+        button.isEnabled = false
+
+        Thread({
+            var lastReportedMb = -1L
+            val ok = ModelStore.download(model, target) { done, total ->
+                if (done < 0) {
+                    append("下载失败：服务器返回异常状态码")
+                    return@download
+                }
+                val doneMb = done / (1024 * 1024)
+                if (doneMb != lastReportedMb) {
+                    lastReportedMb = doneMb
+                    val pct = if (total > 0) done * 100 / total else -1
+                    append(
+                        if (pct >= 0) "下载中 $pct%（${doneMb}MB / ${total / 1024 / 1024}MB）"
+                        else "下载中 ${doneMb}MB"
+                    )
+                }
+            }
+            if (ok) {
+                append("模型下载完成 ✅ 大小 ${ModelStore.sizeMb(this, model)} MB")
+                append("现在点第 5 步，识别会自动切到 whisper.cpp（离线）")
+            } else {
+                append("模型下载失败 ❌ 检查网络后重试；也可以手动把 ${model.fileName} 放到上面那个目录")
+            }
+            ui.post { button.isEnabled = true }
+        }, "model-download").start()
+    }
+
+    // ------------------------------------------------------------ 日志
 
     private fun append(line: String) {
         ui.post { log.append("$line\n") }

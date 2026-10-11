@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # whisper.cpp 首次编译比较慢（要克隆 + 编译 C/C++），给足时间
+    timeout-minutes: 60
 
     steps:
       - name: 取出代码
@@ -19,6 +21,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
+      # whisper.cpp 需要 NDK 编译；版本号必须与 app/build.gradle.kts 的 ndkVersion 一致
+      - name: 安装 Android NDK
+        run: |
+          SDKMAN="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMAN" ]; then SDKMAN="$(command -v sdkmanager)"; fi
+          echo "使用 sdkmanager: $SDKMAN"
+          yes | "$SDKMAN" --install "ndk;26.1.10909125" > /dev/null || true
+          echo "已安装的 NDK："
+          ls -1 "$ANDROID_HOME/ndk" || true
 
       # GitHub 的 ubuntu 运行器自带 Android SDK（ANDROID_HOME 已设置），无需额外安装
       # 本仓库刻意不带 gradle wrapper 的二进制 jar，所以这里直接安装指定版本的 Gradle

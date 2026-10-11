@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">离线同传</string>
-    <string name="header">M0 先验证：手机内播放的音频能否被抓到</string>
+    <string name="header">手机内播放的音频 → 实时中文字幕</string>
     <string name="btn_permissions">1. 申请录音/通知权限</string>
     <string name="btn_overlay">2. 授予悬浮窗权限</string>
-    <string name="btn_probe">3. 开始 10 秒捕获探针</string>
-    <string name="btn_interpret">4. 启动同传管线（骨架）</string>
+    <string name="btn_model">3. 下载识别模型（base ≈142MB）</string>
+    <string name="btn_probe">4. 捕获探针自检（10 秒）</string>
+    <string name="btn_interpret">5. 启动同传（离线识别）</string>
 </resources>
