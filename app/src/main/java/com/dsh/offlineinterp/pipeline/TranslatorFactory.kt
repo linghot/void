@@ -19,7 +19,8 @@ object TranslatorFactory {
                 baseUrl = Settings.baseUrl(context),
                 apiKey = Settings.apiKey(context),
                 model = Settings.mtModel(context),
-                systemPrompt = Settings.prompt(context)
+                // 提示词被清空时兜回默认值：空 content 会被部分服务商判为 400
+                systemPrompt = Settings.prompt(context).ifBlank { Settings.DEFAULT_PROMPT }
             )
         } else {
             NoopTranslator()
@@ -28,7 +29,12 @@ object TranslatorFactory {
     /** 设置页的"测试"用：不落盘，直接拿界面上的值试一次 */
     fun preview(baseUrl: String, apiKey: String, model: String, prompt: String): Translator =
         if (baseUrl.isNotBlank() && apiKey.isNotBlank() && model.isNotBlank()) {
-            OpenAiCompatTranslator(baseUrl.trim(), apiKey.trim(), model.trim(), prompt)
+            OpenAiCompatTranslator(
+                baseUrl.trim(),
+                apiKey.trim(),
+                model.trim(),
+                prompt.ifBlank { Settings.DEFAULT_PROMPT }
+            )
         } else {
             NoopTranslator()
         }
