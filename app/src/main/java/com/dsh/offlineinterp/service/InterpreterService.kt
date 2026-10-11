@@ -16,7 +16,6 @@ import android.os.Looper
 import android.os.PowerManager
 import com.dsh.offlineinterp.MainActivity
 import com.dsh.offlineinterp.capture.AppAudioCapture
-import com.dsh.offlineinterp.capture.AudioCaptureProbe
 import com.dsh.offlineinterp.pipeline.AsrEngine
 import com.dsh.offlineinterp.pipeline.EnergySegmenter
 import com.dsh.offlineinterp.pipeline.ModelStore
@@ -84,7 +83,6 @@ class InterpreterService : Service() {
         // ① 先起前台服务 —— 必须在 getMediaProjection() 之前
         startForeground(NOTIFICATION_ID, buildNotification("离线同传运行中"))
 
-        val mode = intent?.getStringExtra(EXTRA_MODE) ?: MODE_INTERPRET
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
             ?: Activity.RESULT_CANCELED
         @Suppress("DEPRECATION")
@@ -125,31 +123,9 @@ class InterpreterService : Service() {
         isRunning = true
         stateListener?.invoke(true)
 
-        when (mode) {
-            MODE_PROBE -> runProbe(mp)
-            else -> runPipeline(mp)
-        }
+        runPipeline(mp)
 
         return START_NOT_STICKY
-    }
-
-    // ---------------------------------------------------------------- 探针模式
-
-    private fun runProbe(mp: MediaProjection) {
-        notifyLog("开始 ${PROBE_SECONDS} 秒探针，请确认目标 App 正在出声…")
-        Thread({
-            val result = AudioCaptureProbe(mp).run(PROBE_SECONDS) { line -> notifyLog(line) }
-            notifyLog("")
-            notifyLog("—— 探针结果 ——")
-            notifyLog("采样帧数：${result.frames}")
-            notifyLog("峰值：${result.peak}   RMS：${"%.1f".format(result.rms)}")
-            notifyLog("非静音占比：${"%.2f%%".format(result.nonSilentRatio * 100)}")
-            notifyLog("削波占比：${"%.2f%%".format(result.clippedRatio * 100)}")
-            notifyLog("判定：${result.verdict}")
-            notifyLog("提示：${result.hint}")
-            teardown()
-            stopSelf()
-        }, "m0-probe").start()
     }
 
     // ---------------------------------------------------------------- 同传模式
@@ -418,15 +394,11 @@ class InterpreterService : Service() {
     companion object {
         const val EXTRA_RESULT_CODE = "extra_result_code"
         const val EXTRA_RESULT_DATA = "extra_result_data"
-        const val EXTRA_MODE = "extra_mode"
 
-        const val MODE_PROBE = "probe"
-        const val MODE_INTERPRET = "interpret"
         const val ACTION_STOP = "com.dsh.offlineinterp.action.STOP"
 
         private const val CHANNEL_ID = "offline_interp"
         private const val NOTIFICATION_ID = 42
-        private const val PROBE_SECONDS = 10
         private const val SAMPLE_RATE = 16_000
         private const val REQ_OPEN = 101
         private const val REQ_STOP = 102
@@ -447,11 +419,10 @@ class InterpreterService : Service() {
         @Volatile
         var stateListener: ((Boolean) -> Unit)? = null
 
-        fun start(context: Context, resultCode: Int, resultData: Intent, mode: String) {
+        fun start(context: Context, resultCode: Int, resultData: Intent) {
             val intent = Intent(context, InterpreterService::class.java)
                 .putExtra(EXTRA_RESULT_CODE, resultCode)
                 .putExtra(EXTRA_RESULT_DATA, resultData)
-                .putExtra(EXTRA_MODE, mode)
             context.startForegroundService(intent)
         }
 

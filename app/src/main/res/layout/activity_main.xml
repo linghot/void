@@ -27,7 +27,6 @@
                 android:textStyle="bold" />
 
             <TextView
-                android:id="@+id/tvHeaderSub"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
@@ -35,7 +34,7 @@
                 android:textColor="@color/text_secondary"
                 android:textSize="13sp" />
 
-            <!-- ============ 状态卡 ============ -->
+            <!-- ============ 状态卡（每行可点） ============ -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -55,6 +54,20 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvPermState"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
                     android:textSize="14sp" />
 
                 <TextView
@@ -62,6 +75,9 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
                     android:textSize="14sp" />
 
                 <TextView
@@ -69,6 +85,9 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
                     android:textSize="14sp" />
 
                 <TextView
@@ -76,6 +95,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
+                    android:paddingTop="4dp"
                     android:textSize="14sp" />
             </LinearLayout>
 
@@ -105,7 +125,7 @@
                     android:text="@string/btn_stop" />
             </LinearLayout>
 
-            <!-- ============ 准备步骤 ============ -->
+            <!-- ============ 模型与设置 ============ -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -118,30 +138,14 @@
                     style="@style/SectionTitle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/section_prepare" />
-
-                <Button
-                    android:id="@+id/btnPermissions"
-                    style="@style/SecondaryButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:text="@string/btn_permissions" />
-
-                <Button
-                    android:id="@+id/btnOverlay"
-                    style="@style/SecondaryButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="@string/btn_overlay" />
+                    android:text="@string/section_model" />
 
                 <Button
                     android:id="@+id/btnModel"
                     style="@style/SecondaryButton"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
+                    android:layout_marginTop="10dp"
                     android:text="@string/btn_model" />
 
                 <Button
@@ -151,14 +155,6 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:text="@string/btn_import" />
-
-                <Button
-                    android:id="@+id/btnProbe"
-                    style="@style/SecondaryButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="@string/btn_probe" />
 
                 <Button
                     android:id="@+id/btnSettings"
@@ -186,7 +182,7 @@
     <!-- ============ 日志 ============ -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="200dp"
+        android:layout_height="190dp"
         android:layout_marginStart="16dp"
         android:layout_marginEnd="16dp"
         android:layout_marginBottom="14dp"

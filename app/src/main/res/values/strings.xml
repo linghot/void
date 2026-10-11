@@ -3,20 +3,17 @@
     <string name="app_name">离线同传</string>
     <string name="header">抓取手机内播放的音频 → 离线识别 → 悬浮中文字幕</string>
 
-    <string name="section_status">当前状态</string>
-    <string name="section_prepare">准备步骤（首次使用按顺序点一遍）</string>
+    <string name="section_status">当前状态（✗ 的那行点一下即可修复）</string>
+    <string name="section_model">模型与设置</string>
     <string name="section_log">运行日志</string>
 
-    <string name="btn_permissions">① 录音与通知权限</string>
-    <string name="btn_overlay">② 悬浮窗权限</string>
-    <string name="btn_model">③ 下载识别模型（含国内镜像）</string>
-    <string name="btn_import">③b 从文件导入模型</string>
-    <string name="btn_probe">④ 捕获探针自检（10 秒）</string>
+    <string name="btn_model">下载识别模型（含国内镜像）</string>
+    <string name="btn_import">从文件导入模型</string>
     <string name="btn_interpret">启动同传</string>
     <string name="btn_stop">停止</string>
-    <string name="btn_settings">⚙ 设置</string>
+    <string name="btn_settings">⚙ 设置（翻译 API / 识别 / 字幕）</string>
 
-    <string name="tip_overlay_drag">提示：字幕出现后可以按住拖动到任意位置，松手自动记住；单击字幕可切换「详细/精简」。</string>
+    <string name="tip_overlay_drag">提示：字幕出现后可按住拖动到任意位置，松手自动记住；单击字幕切换「详细/精简」。</string>
 
     <string name="settings_title">设置</string>
     <string name="settings_hint">翻译 API 填了才会真的翻译；不填则第二行与第一行相同。所有内容只保存在本机，不会上传。</string>
@@ -46,5 +43,5 @@
     <string name="settings_reset_overlay">重置字幕位置</string>
     <string name="settings_overlay_hint">字幕可以直接在屏幕上按住拖动；单击切换详细/精简；位置与字号都会记住。</string>
 
-    <string name="settings_footer">改完识别模型后，回主界面点 ③ 下载、或 ③b 导入对应的模型文件。</string>
+    <string name="settings_footer">改完识别模型后，回主界面下载或导入对应的模型文件。</string>
 </resources>

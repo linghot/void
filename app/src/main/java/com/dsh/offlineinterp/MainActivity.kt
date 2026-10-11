@@ -20,11 +20,11 @@ import com.dsh.offlineinterp.pipeline.Settings
 import com.dsh.offlineinterp.service.InterpreterService
 
 /**
- * 主界面（v0.7 重做）：
- *  - 顶部状态卡实时显示：运行状态 / 识别模型 / 翻译 / 设备温度
- *  - 启动、停止做成主操作按钮，其余按"准备步骤"顺序排列
- *  - 日志固定在最下方，不用来回翻
- *  - 温度每 2 秒刷新一次，发烫时能一眼看到
+ * 主界面（v0.9）：
+ *  - **权限自动申请**：打开就自动弹录音/通知权限；悬浮窗权限自动跳授权页。
+ *    不再让用户去找按钮（缺权限时点状态栏那行也能补）。
+ *  - **探针已移除**：M0 验证完成，那段代码退役了。
+ *  - 状态栏每 2 秒刷新，✗ 的那一行点一下即可自动修复。
  */
 class MainActivity : Activity() {
 
@@ -32,12 +32,13 @@ class MainActivity : Activity() {
     private lateinit var log: TextView
     private lateinit var logScroll: ScrollView
     private lateinit var tvRunState: TextView
+    private lateinit var tvPermState: TextView
     private lateinit var tvModelState: TextView
     private lateinit var tvMtState: TextView
     private lateinit var tvThermal: TextView
     private lateinit var projectionManager: MediaProjectionManager
 
-    private var pendingMode: String = InterpreterService.MODE_PROBE
+    private var autoPrompted = false
 
     private val statusTicker = object : Runnable {
         override fun run() {
@@ -53,6 +54,7 @@ class MainActivity : Activity() {
         log = findViewById(R.id.log)
         logScroll = findViewById(R.id.logScroll)
         tvRunState = findViewById(R.id.tvRunState)
+        tvPermState = findViewById(R.id.tvPermState)
         tvModelState = findViewById(R.id.tvModelState)
         tvMtState = findViewById(R.id.tvMtState)
         tvThermal = findViewById(R.id.tvThermal)
@@ -61,24 +63,31 @@ class MainActivity : Activity() {
         InterpreterService.logListener = { line -> append(line) }
         InterpreterService.stateListener = { running -> ui.post { applyRunningState(running) } }
 
-        append("离线同传 v0.7 · 已做发热优化与界面重做")
-        append("首次使用顺序：① 权限 → ② 悬浮窗 → ③ 下载/导入模型 → 启动")
-        append("字幕可拖动：按住字幕拖到任意位置，松手记住；单击切换详细/精简")
+        append("离线同传 v0.9 · 已移除探针（M0 验证完成），权限改为自动申请")
+        append("用法：授权 → 下载/导入模型 → 点「启动同传」→ 打开你要看的视频")
+        append("字幕可拖动；单击字幕切换详细/精简")
         append("")
 
-        findViewById<Button>(R.id.btnPermissions).setOnClickListener { requestRuntimePermissions() }
-        findViewById<Button>(R.id.btnOverlay).setOnClickListener { askOverlayPermission() }
+        // 状态栏每一行都可点：✗ 的那行点一下就能修
+        tvRunState.setOnClickListener {
+            if (InterpreterService.isRunning) {
+                InterpreterService.stop(this)
+            } else {
+                launchCapture()
+            }
+        }
+        tvPermState.setOnClickListener { autoFixPermissions(force = true) }
+        tvModelState.setOnClickListener { downloadModel() }
+        tvMtState.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
+
+        findViewById<Button>(R.id.btnModel).setOnClickListener { downloadModel() }
+        findViewById<Button>(R.id.btnImport).setOnClickListener { pickModelFile() }
         findViewById<Button>(R.id.btnSettings).setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
-        findViewById<Button>(R.id.btnModel).setOnClickListener { downloadModel() }
-        findViewById<Button>(R.id.btnImport).setOnClickListener { pickModelFile() }
-        findViewById<Button>(R.id.btnProbe).setOnClickListener {
-            launchCapture(InterpreterService.MODE_PROBE)
-        }
-        findViewById<Button>(R.id.btnInterpret).setOnClickListener {
-            launchCapture(InterpreterService.MODE_INTERPRET)
-        }
+        findViewById<Button>(R.id.btnInterpret).setOnClickListener { launchCapture() }
         findViewById<Button>(R.id.btnStop).setOnClickListener {
             append("已发送停止指令…")
             InterpreterService.stop(this)
@@ -90,11 +99,78 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         ui.post(statusTicker)
+        // 打开应用就自动把缺的权限要一遍（每次启动只自动要一次，避免烦人）
+        if (!autoPrompted) {
+            autoPrompted = true
+            autoFixPermissions(force = false)
+        }
     }
 
     override fun onPause() {
         ui.removeCallbacks(statusTicker)
         super.onPause()
+    }
+
+    // ------------------------------------------------------------ 权限（自动）
+
+    /**
+     * 自动补权限：
+     *  - 录音 / 通知：系统框，直接弹
+     *  - 悬浮窗：只能跳到设置页（安卓不允许程序自己授予）
+     * [force] = 用户手动点了状态栏那行，这时即已具备也重新检查一遍
+     */
+    private fun autoFixPermissions(force: Boolean) {
+        val missing = mutableListOf<String>()
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            missing += Manifest.permission.RECORD_AUDIO
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            missing += Manifest.permission.POST_NOTIFICATIONS
+        }
+
+        if (missing.isNotEmpty()) {
+            append("自动申请权限：${missing.size} 项（录音 / 通知）")
+            requestPermissions(missing.toTypedArray(), REQ_PERMISSIONS)
+            return
+        }
+
+        if (!AndroidSettings.canDrawOverlays(this)) {
+            if (force || !overlayPrompted) {
+                overlayPrompted = true
+                askOverlayPermission()
+            }
+        } else if (force) {
+            append("权限检查：已全部具备 ✓")
+        }
+    }
+
+    private var overlayPrompted = false
+
+    private fun askOverlayPermission() {
+        append("请允许「显示在其他应用上层」，这是悬浮字幕必需的")
+        startActivity(
+            Intent(
+                AndroidSettings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+        )
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_PERMISSIONS) return
+        // 录音/通知处理完，接着引导悬浮窗
+        if (!AndroidSettings.canDrawOverlays(this) && !overlayPrompted) {
+            overlayPrompted = true
+            ui.postDelayed({ askOverlayPermission() }, 400)
+        }
+        refreshStatus()
     }
 
     // ------------------------------------------------------------ 状态刷新
@@ -108,19 +184,29 @@ class MainActivity : Activity() {
         val model = currentModel()
         val found = ModelStore.resolveFile(this, model)
 
+        val recordOk = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val notifyOk = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        val overlayOk = AndroidSettings.canDrawOverlays(this)
+        setStatus(
+            tvPermState,
+            recordOk && overlayOk,
+            "权限：录音${mark(recordOk)} 悬浮窗${mark(overlayOk)} 通知${mark(notifyOk)}（点这行可重新申请）"
+        )
+
         setStatus(
             tvModelState,
             found != null,
-            if (found != null) "识别模型：已就绪（${model.id}，${ModelStore.sizeMb(found)} MB）"
-            else "识别模型：未就绪 —— 点 ③ 下载或 ③b 导入（当前选 ${model.id}）"
+            if (found != null) "识别模型：已就绪（${model.id}，${ModelStore.sizeMb(found)} MB）（点这行可换/下载）"
+            else "识别模型：未就绪（当前选 ${model.id}）—— 点这行下载"
         )
 
         val mtReady = Settings.translatorReady(this)
         setStatus(
             tvMtState,
             mtReady,
-            if (mtReady) "翻译：已配置（${Settings.mtModel(this)}）"
-            else "翻译：未配置 —— 现在第二行会与第一行相同"
+            if (mtReady) "翻译：已配置（${Settings.mtModel(this)}）（点这行去设置）"
+            else "翻译：未配置，第二行会与第一行相同 —— 点这行去填"
         )
 
         tvThermal.text = "设备温度：${thermalLabel()} ｜ 线程 ${Settings.threads(this)} ｜ 临时字幕 ${
@@ -128,6 +214,8 @@ class MainActivity : Activity() {
         }"
         tvThermal.setTextColor(getColor(thermalColorRes()))
     }
+
+    private fun mark(ok: Boolean): String = if (ok) "✓" else "✗"
 
     private fun setStatus(view: TextView, ok: Boolean, text: String) {
         view.text = (if (ok) "✓ " else "✗ ") + text
@@ -158,10 +246,9 @@ class MainActivity : Activity() {
     }
 
     private fun applyRunningState(running: Boolean) {
-        tvRunState.text = if (running) "● 正在捕获并翻译" else "● 未启动"
-        tvRunState.setTextColor(getColor(if (running) R.color.ok else R.color.text_secondary))
+        tvRunState.text = if (running) "● 正在捕获并翻译（点这行=停止）" else "● 未启动（点这行=启动）"
+        tvRunState.setTextColor(getColor(if (running) R.color.ok else R.color.primary))
         findViewById<Button>(R.id.btnStop).isEnabled = running
-        findViewById<Button>(R.id.btnProbe).isEnabled = !running
         findViewById<Button>(R.id.btnInterpret).isEnabled = !running
         findViewById<Button>(R.id.btnModel).isEnabled = !running
         findViewById<Button>(R.id.btnImport).isEnabled = !running
@@ -169,37 +256,22 @@ class MainActivity : Activity() {
         append(if (running) "状态：捕获中" else "状态：已停止")
     }
 
-    // ------------------------------------------------------------ 权限
+    // ------------------------------------------------------------ 启动捕获
 
-    private fun requestRuntimePermissions() {
-        val need = mutableListOf(Manifest.permission.RECORD_AUDIO)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            need += Manifest.permission.POST_NOTIFICATIONS
-        }
-        requestPermissions(need.toTypedArray(), REQ_PERMISSIONS)
-    }
-
-    private fun askOverlayPermission() {
-        if (AndroidSettings.canDrawOverlays(this)) {
-            append("悬浮窗权限：已具备")
-        } else {
-            append("请在系统页面里允许「显示在其他应用上层」")
-            startActivity(
-                Intent(
-                    AndroidSettings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:$packageName")
-                )
-            )
-        }
-    }
-
-    private fun launchCapture(mode: String) {
+    private fun launchCapture() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            append("还没有录音权限，请先点 ①")
-            requestRuntimePermissions()
+            append("还缺录音权限，正在为你申请…")
+            autoFixPermissions(force = true)
             return
         }
-        pendingMode = mode
+        if (!AndroidSettings.canDrawOverlays(this)) {
+            append("还缺悬浮窗权限，否则看不到字幕，正在为你打开授权页…")
+            askOverlayPermission()
+            return
+        }
+        if (ModelStore.resolveFile(this, currentModel()) == null) {
+            append("提示：识别模型还没就绪，启动后只会显示占位文字。建议先回上一步下载模型。")
+        }
         startActivityForResult(projectionManager.createScreenCaptureIntent(), REQ_CAPTURE)
     }
 
@@ -222,8 +294,8 @@ class MainActivity : Activity() {
             append("授权被取消 —— 捕获必须要用户手动同意录屏")
             return
         }
-        append("已获得录屏授权，交给前台服务执行（模式=$pendingMode）")
-        InterpreterService.start(this, resultCode, data, pendingMode)
+        append("已获得录屏授权，开始捕获")
+        InterpreterService.start(this, resultCode, data)
     }
 
     // ------------------------------------------------------------ 模型
@@ -259,8 +331,8 @@ class MainActivity : Activity() {
             if (ok) {
                 append("模型下载完成 ✅ ${ModelStore.sizeMb(target)} MB")
             } else {
-                append("下载失败 ❌ 两个源都不通。改用 ③b：「从文件导入模型」")
-                append("  电脑浏览器下载 ${model.fileName}（约 ${model.sizeMb} MB）→ 传到手机 → 点 ③b 选中它")
+                append("下载失败 ❌ 两个源都不通。改用「从文件导入模型」：")
+                append("  电脑浏览器下载 ${model.fileName}（约 ${model.sizeMb} MB）→ 传到手机 → 点导入按钮选中它")
             }
             ui.post {
                 button.isEnabled = true
