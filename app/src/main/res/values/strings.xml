@@ -7,4 +7,5 @@
     <string name="btn_model">3. 下载识别模型（base ≈142MB）</string>
     <string name="btn_probe">4. 捕获探针自检（10 秒）</string>
     <string name="btn_interpret">5. 启动同传（离线识别）</string>
+    <string name="btn_stop">6. 停止捕获 / 结束同传</string>
 </resources>

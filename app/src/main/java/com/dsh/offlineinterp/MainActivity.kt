@@ -17,13 +17,15 @@ import com.dsh.offlineinterp.pipeline.ModelStore
 import com.dsh.offlineinterp.service.InterpreterService
 
 /**
- * 入口界面。5 步：权限 → 悬浮窗 → 下载模型 → 探针自检 → 启动同传。
+ * 入口界面。6 步：权限 → 悬浮窗 → 下载模型 → 探针自检 → 启动同传 → **停止**。
  *
  * 设计要点：
  * 1. 探针与正式管线都交给 [InterpreterService] 执行 —— Android 14 起，
  *    使用 MediaProjection 必须先在 mediaProjection 类型的前台服务里 startForeground()，
- *    再调用 getMediaProjection()；放在 Activity 里做会在新系统上抛 SecurityException。
- * 2. 刻意不引入 AndroidX（平台 Activity + startActivityForResult），保持零依赖。
+ *    再调用 getMediaProjection()。
+ * 2. 停止有三个入口（本页按钮 / 通知栏按钮 / 系统"停止共享"），
+ *    状态由 [InterpreterService.stateListener] 回传，按钮会自动启用禁用。
+ * 3. 刻意不引入 AndroidX（平台 Activity + startActivityForResult），保持零依赖。
  */
 class MainActivity : Activity() {
 
@@ -40,11 +42,13 @@ class MainActivity : Activity() {
         log = findViewById(R.id.log)
         projectionManager = getSystemService(MediaProjectionManager::class.java)
 
-        // 让服务里的探针进度能回到这个界面（骨架用的简易通道）
-        InterpreterService.probeListener = { line -> append(line) }
+        // 服务 → 界面的两条通道
+        InterpreterService.logListener = { line -> append(line) }
+        InterpreterService.stateListener = { running -> ui.post { applyRunningState(running) } }
 
-        append("离线同传 · M2 离线识别版")
-        append("顺序：1 权限 → 2 悬浮窗 → 3 下载模型 → 4 探针自检 → 5 启动同传")
+        append("离线同传 · v0.3（已修复：无法停止捕获）")
+        append("顺序：1 权限 → 2 悬浮窗 → 3 下载模型 → 4 探针 → 5 启动 → 6 停止")
+        append("停止有三种方式：① 本页第 6 步  ② 通知栏「停止同传」  ③ 系统「停止共享」")
         append("")
 
         val model = ModelStore.DEFAULT
@@ -81,6 +85,21 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.btnInterpret).setOnClickListener {
             launchCapture(InterpreterService.MODE_INTERPRET)
         }
+
+        findViewById<Button>(R.id.btnStop).setOnClickListener {
+            append("已发送停止指令…")
+            InterpreterService.stop(this)
+        }
+
+        applyRunningState(InterpreterService.isRunning)
+    }
+
+    /** 按运行状态启用/禁用按钮，避免重复点击 */
+    private fun applyRunningState(running: Boolean) {
+        findViewById<Button>(R.id.btnStop).isEnabled = running
+        findViewById<Button>(R.id.btnProbe).isEnabled = !running
+        findViewById<Button>(R.id.btnInterpret).isEnabled = !running
+        append(if (running) "状态：捕获中" else "状态：已停止")
     }
 
     // ------------------------------------------------------------ 权限与授权

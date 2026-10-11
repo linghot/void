@@ -42,6 +42,13 @@
         android:layout_height="wrap_content"
         android:text="@string/btn_interpret" />
 
+    <Button
+        android:id="@+id/btnStop"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:enabled="false"
+        android:text="@string/btn_stop" />
+
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"

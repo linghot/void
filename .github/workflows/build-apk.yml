@@ -22,6 +22,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # 把 debug 签名文件缓存下来：否则每次构建都生成新的签名，
+      # 手机上装新版本时必须先卸载旧版本。缓存后就能直接覆盖安装。
+      - name: 缓存 debug keystore（固定签名）
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: android-debug-keystore-v1
+
       # whisper.cpp 需要 NDK 编译；版本号必须与 app/build.gradle.kts 的 ndkVersion 一致
       - name: 安装 Android NDK
         run: |

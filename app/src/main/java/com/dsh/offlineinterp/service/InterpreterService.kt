@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -12,6 +13,7 @@ import android.media.projection.MediaProjectionManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import com.dsh.offlineinterp.MainActivity
 import com.dsh.offlineinterp.capture.AppAudioCapture
 import com.dsh.offlineinterp.capture.AudioCaptureProbe
 import com.dsh.offlineinterp.pipeline.AsrEngine
@@ -26,17 +28,16 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /**
- * 前台服务：捕获 → 切句 → 识别 → 翻译 → 悬浮字幕，全在这里跑。
+ * 前台服务：捕获 → 切句 → 识别 → 翻译 → 悬浮字幕。
+ *
+ * **停止**（v0.3 新增）支持三种入口，都会走 [teardown] 干净收尾：
+ *  1. App 界面上的「停止捕获」按钮 → [stop]
+ *  2. 通知栏里的「停止同传」按钮 → ACTION_STOP
+ *  3. 系统"屏幕共享中"提示里的「停止共享」→ MediaProjection 回调 onStop
  *
  * **为什么必须放在服务里**（Android 14 / API 34 的硬要求）：
- * 使用 MediaProjection 前，必须先启动一个 foregroundServiceType="mediaProjection"
- * 的前台服务并调用 startForeground()，然后才能 getMediaProjection()，
- * 否则会抛 SecurityException。所以授权结果是从 Activity 传进来、在这里消费的。
- *
- * 两种模式：
- *  - [MODE_PROBE]：只跑捕获探针，回答"这个 App 的音频抓不抓得到"
- *  - [MODE_INTERPRET]：跑完整管线。识别引擎按 [chooseAsr] 自动选择：
- *      模型就绪 → whisper.cpp 离线识别；否则退回占位实现（保证不崩）
+ * 使用 MediaProjection 前，必须先启动 foregroundServiceType="mediaProjection"
+ * 的前台服务并调用 startForeground()，然后才能 getMediaProjection()。
  */
 class InterpreterService : Service() {
 
@@ -63,6 +64,15 @@ class InterpreterService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+
+        // 停止指令优先处理：此时不需要前台服务，也不需要授权数据
+        if (intent?.action == ACTION_STOP) {
+            notifyLog("收到停止指令，正在结束捕获…")
+            teardown()
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         // ① 先起前台服务 —— 必须在 getMediaProjection() 之前
         startForeground(NOTIFICATION_ID, buildNotification("离线同传运行中"))
 
@@ -73,7 +83,8 @@ class InterpreterService : Service() {
         val resultData = intent?.getParcelableExtra(EXTRA_RESULT_DATA) as? Intent
 
         if (resultCode != Activity.RESULT_OK || resultData == null) {
-            notifyProbe("授权数据无效，无法开始捕获")
+            notifyLog("授权数据无效，无法开始捕获")
+            teardown()
             stopSelf()
             return START_NOT_STICKY
         }
@@ -83,23 +94,29 @@ class InterpreterService : Service() {
         val mp = try {
             manager.getMediaProjection(resultCode, resultData)
         } catch (t: Throwable) {
-            notifyProbe("getMediaProjection 失败：${t.javaClass.simpleName} ${t.message}")
+            notifyLog("getMediaProjection 失败：${t.javaClass.simpleName} ${t.message}")
             null
         }
 
         if (mp == null) {
-            notifyProbe("getMediaProjection 返回 null")
+            notifyLog("getMediaProjection 返回 null")
+            teardown()
             stopSelf()
             return START_NOT_STICKY
         }
 
         projection = mp
-        // API 34+ 要求注册回调，否则复用会话时会抛异常
+        // 注册回调：用户在系统提示里点「停止共享」时会走到这里
         mp.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
+                notifyLog("系统结束了屏幕共享")
+                teardown()
                 stopSelf()
             }
         }, ui)
+
+        isRunning = true
+        stateListener?.invoke(true)
 
         when (mode) {
             MODE_PROBE -> runProbe(mp)
@@ -112,21 +129,18 @@ class InterpreterService : Service() {
     // ---------------------------------------------------------------- 探针模式
 
     private fun runProbe(mp: MediaProjection) {
-        notifyProbe("开始 ${PROBE_SECONDS} 秒探针，请确认目标 App 正在出声…")
+        notifyLog("开始 ${PROBE_SECONDS} 秒探针，请确认目标 App 正在出声…")
         Thread({
-            val result = AudioCaptureProbe(mp).run(PROBE_SECONDS) { line -> notifyProbe(line) }
-            notifyProbe("")
-            notifyProbe("—— 探针结果 ——")
-            notifyProbe("采样帧数：${result.frames}")
-            notifyProbe("峰值：${result.peak}   RMS：${"%.1f".format(result.rms)}")
-            notifyProbe("非静音占比：${"%.2f%%".format(result.nonSilentRatio * 100)}")
-            notifyProbe("削波占比：${"%.2f%%".format(result.clippedRatio * 100)}")
-            notifyProbe("判定：${result.verdict}")
-            notifyProbe("提示：${result.hint}")
-            try {
-                mp.stop()
-            } catch (_: Throwable) {
-            }
+            val result = AudioCaptureProbe(mp).run(PROBE_SECONDS) { line -> notifyLog(line) }
+            notifyLog("")
+            notifyLog("—— 探针结果 ——")
+            notifyLog("采样帧数：${result.frames}")
+            notifyLog("峰值：${result.peak}   RMS：${"%.1f".format(result.rms)}")
+            notifyLog("非静音占比：${"%.2f%%".format(result.nonSilentRatio * 100)}")
+            notifyLog("削波占比：${"%.2f%%".format(result.clippedRatio * 100)}")
+            notifyLog("判定：${result.verdict}")
+            notifyLog("提示：${result.hint}")
+            teardown()
             stopSelf()
         }, "m0-probe").start()
     }
@@ -135,7 +149,7 @@ class InterpreterService : Service() {
 
     private fun runPipeline(mp: MediaProjection) {
         if (!overlay.canDraw()) {
-            notifyProbe("提示：没有悬浮窗权限，字幕将不可见")
+            notifyLog("提示：没有悬浮窗权限，字幕将不可见")
         }
         overlay.show()
 
@@ -145,7 +159,7 @@ class InterpreterService : Service() {
             if (asrReady) {
                 "识别：${asr.name}\n翻译：${translator.name}\n正在等待语音…"
             } else {
-                "识别模型不可用（请先点第 3 步下载）\n当前为占位识别，不会出真字幕"
+                "识别模型不可用（请先回 App 点第 3 步下载）\n当前为占位识别，不会出真字幕"
             }
         )
 
@@ -157,6 +171,8 @@ class InterpreterService : Service() {
             onPcm16k = { pcm -> segmenter?.accept(pcm) },
             onError = { message -> overlay.setText("捕获错误：$message") }
         ).also { it.start() }
+
+        notifyLog("同传已启动。停止方式：① 本页按钮 ② 通知栏「停止同传」 ③ 系统「停止共享」")
     }
 
     /**
@@ -206,23 +222,50 @@ class InterpreterService : Service() {
         }, "interp-worker").also { it.start() }
     }
 
-    // ---------------------------------------------------------------- 生命周期
+    // ---------------------------------------------------------------- 收尾
 
-    override fun onDestroy() {
+    /**
+     * 一次性把捕获、切句、识别、悬浮窗、投影全部关掉。
+     * 可重复调用（所有引用先置空再释放，不会递归）。
+     */
+    private fun teardown() {
         capture?.stop()
         capture = null
+
         segmenter?.flush()
         segmenter = null
+
         worker?.interrupt()
         worker = null
         segmentQueue.clear()
+
         overlay.hide()
-        asr.release()
+
         try {
-            projection?.stop()
+            asr.release()
         } catch (_: Throwable) {
         }
+        asr = StubAsrEngine()
+
+        val mp = projection
         projection = null
+        try {
+            mp?.stop()
+        } catch (_: Throwable) {
+        }
+
+        isRunning = false
+        stateListener?.invoke(false)
+
+        try {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } catch (_: Throwable) {
+        }
+    }
+
+    override fun onDestroy() {
+        notifyLog("同传已停止")
+        teardown()
         super.onDestroy()
     }
 
@@ -239,16 +282,37 @@ class InterpreterService : Service() {
         manager.createNotificationChannel(channel)
     }
 
-    private fun buildNotification(text: String): Notification =
-        Notification.Builder(this, CHANNEL_ID)
+    @Suppress("DEPRECATION")
+    private fun buildNotification(text: String): Notification {
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+
+        // 点通知正文 → 打开 App（里面就有停止按钮）
+        val openIntent = Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val openPending = PendingIntent.getActivity(this, REQ_OPEN, openIntent, flags)
+
+        // 通知上的「停止同传」按钮 → 直接停
+        val stopIntent = Intent(this, InterpreterService::class.java).setAction(ACTION_STOP)
+        val stopPending = PendingIntent.getService(this, REQ_STOP, stopIntent, flags)
+
+        return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("离线同传")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentIntent(openPending)
             .setOngoing(true)
+            .addAction(
+                Notification.Action.Builder(
+                    android.R.drawable.ic_menu_close_clear_cancel,
+                    "停止同传",
+                    stopPending
+                ).build()
+            )
             .build()
+    }
 
-    private fun notifyProbe(line: String) {
-        probeListener?.invoke(line)
+    private fun notifyLog(line: String) {
+        logListener?.invoke(line)
     }
 
     companion object {
@@ -262,10 +326,15 @@ class InterpreterService : Service() {
         /** 跑完整同传管线 */
         const val MODE_INTERPRET = "interpret"
 
+        /** 停止捕获的指令 */
+        const val ACTION_STOP = "com.dsh.offlineinterp.action.STOP"
+
         private const val CHANNEL_ID = "offline_interp"
         private const val NOTIFICATION_ID = 42
         private const val PROBE_SECONDS = 10
         private const val SAMPLE_RATE = 16_000
+        private const val REQ_OPEN = 101
+        private const val REQ_STOP = 102
 
         /** whisper 推理线程数：一般取大核数量，4~6 之间 */
         private const val WHISPER_THREADS = 4
@@ -276,16 +345,38 @@ class InterpreterService : Service() {
          */
         private const val ASR_LANGUAGE = "auto"
 
-        /** 探针进度回传通道（骨架简化：Activity 设进来，服务往里推） */
+        /** 服务是否在运行（界面用来显示状态、启用/禁用按钮） */
         @Volatile
-        var probeListener: ((String) -> Unit)? = null
+        var isRunning: Boolean = false
+            private set
 
+        /** 日志回传通道（界面设进来） */
+        @Volatile
+        var logListener: ((String) -> Unit)? = null
+
+        /** 运行状态变化回调（true=捕获中，false=已停止） */
+        @Volatile
+        var stateListener: ((Boolean) -> Unit)? = null
+
+        /** 开始：需要把 MediaProjection 的授权结果一起带进去 */
         fun start(context: Context, resultCode: Int, resultData: Intent, mode: String) {
             val intent = Intent(context, InterpreterService::class.java)
                 .putExtra(EXTRA_RESULT_CODE, resultCode)
                 .putExtra(EXTRA_RESULT_DATA, resultData)
                 .putExtra(EXTRA_MODE, mode)
             context.startForegroundService(intent)
+        }
+
+        /** 停止：App 界面按钮调用 */
+        fun stop(context: Context) {
+            val intent = Intent(context, InterpreterService::class.java).setAction(ACTION_STOP)
+            try {
+                context.startService(intent)
+            } catch (t: Throwable) {
+                // 极端情况（服务已被系统回收）时直接兜底
+                isRunning = false
+                stateListener?.invoke(false)
+            }
         }
     }
 }
