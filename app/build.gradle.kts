@@ -16,8 +16,8 @@ android {
         // AudioPlaybackCapture 从 Android 10 (API 29) 才有，低于此版本无解
         minSdk = 29
         targetSdk = 34
-        versionCode = 6
-        versionName = "0.6-norepeat"
+        versionCode = 7
+        versionName = "0.7-ui"
 
         ndk {
             // 只打主流真机架构。要用模拟器就再加上 "x86_64"

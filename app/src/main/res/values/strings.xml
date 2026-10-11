@@ -1,28 +1,48 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">离线同传</string>
-    <string name="header">手机内播放的音频 → 实时中文字幕</string>
-    <string name="btn_permissions">1. 申请录音/通知权限</string>
-    <string name="btn_overlay">2. 授予悬浮窗权限</string>
-    <string name="btn_model">3. 下载识别模型（含国内镜像）</string>
-    <string name="btn_import">3b. 从文件导入模型（下载不了就用这个）</string>
-    <string name="btn_probe">4. 捕获探针自检（10 秒）</string>
-    <string name="btn_interpret">5. 启动同传（离线识别）</string>
-    <string name="btn_stop">6. 停止捕获 / 结束同传</string>
-    <string name="btn_settings">⚙ 设置（翻译 API / 识别模型）</string>
+    <string name="header">抓取手机内播放的音频 → 离线识别 → 悬浮中文字幕</string>
+
+    <string name="section_status">当前状态</string>
+    <string name="section_prepare">准备步骤（首次使用按顺序点一遍）</string>
+    <string name="section_log">运行日志</string>
+
+    <string name="btn_permissions">① 录音与通知权限</string>
+    <string name="btn_overlay">② 悬浮窗权限</string>
+    <string name="btn_model">③ 下载识别模型（含国内镜像）</string>
+    <string name="btn_import">③b 从文件导入模型</string>
+    <string name="btn_probe">④ 捕获探针自检（10 秒）</string>
+    <string name="btn_interpret">启动同传</string>
+    <string name="btn_stop">停止</string>
+    <string name="btn_settings">⚙ 设置</string>
+
+    <string name="tip_overlay_drag">提示：字幕出现后可以按住拖动到任意位置，松手自动记住；单击字幕可切换「详细/精简」。</string>
 
     <string name="settings_title">设置</string>
-    <string name="settings_hint">翻译 API 填了才会真的翻译；不填则第二行与第一行相同（原文直通）。所有内容只保存在本机。</string>
-    <string name="settings_section_mt">翻译 API（OpenAI 兼容 /chat/completions）</string>
+    <string name="settings_hint">翻译 API 填了才会真的翻译；不填则第二行与第一行相同。所有内容只保存在本机，不会上传。</string>
+
+    <string name="settings_section_mt">翻译 API（OpenAI 兼容）</string>
     <string name="settings_base_url">接口地址（含 /v1）</string>
     <string name="settings_model">模型名</string>
     <string name="settings_api_key">API Key</string>
     <string name="settings_prompt">翻译提示词</string>
     <string name="settings_test">测试连接</string>
     <string name="settings_save">保存</string>
+    <string name="hint_base_url">https://api.deepseek.com/v1</string>
+    <string name="hint_model">deepseek-chat</string>
+    <string name="hint_api_key">sk-...</string>
+
     <string name="settings_section_asr">识别</string>
-    <string name="settings_asr_model">识别模型（越大越准、越慢）</string>
-    <string name="settings_asr_lang">源语言（已知语言写死更快更准）</string>
-    <string name="settings_partial">边说边出临时字幕（延迟更低，CPU 占用更高）</string>
-    <string name="settings_footer">改完识别模型后，回主界面点第 3 步下载、或第 3b 步从文件导入对应模型。</string>
+    <string name="settings_asr_model">识别模型（越大越准、越耗电）</string>
+    <string name="settings_asr_lang">源语言（已知就写死，更快更准）</string>
+    <string name="settings_threads">推理线程数（越少越省电、越不烫）</string>
+    <string name="settings_partial">边说边出临时字幕（明显更耗电，发热主要来自它）</string>
+    <string name="settings_thermal_hint">默认关闭以控制发热。手机发烫时系统也会自动帮你关掉它。</string>
+
+    <string name="settings_section_overlay">字幕外观</string>
+    <string name="settings_font">字幕字号</string>
+    <string name="settings_reset_overlay">重置字幕位置</string>
+    <string name="settings_overlay_hint">字幕可以直接在屏幕上按住拖动；单击切换详细/精简；位置与字号都会记住。</string>
+
+    <string name="settings_footer">改完识别模型后，回主界面点 ③ 下载、或 ③b 导入对应的模型文件。</string>
 </resources>

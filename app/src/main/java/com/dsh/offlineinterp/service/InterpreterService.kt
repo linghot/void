@@ -13,6 +13,7 @@ import android.media.projection.MediaProjectionManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import com.dsh.offlineinterp.MainActivity
 import com.dsh.offlineinterp.capture.AppAudioCapture
 import com.dsh.offlineinterp.capture.AudioCaptureProbe
@@ -55,6 +56,7 @@ class InterpreterService : Service() {
     private var projection: MediaProjection? = null
     private var capture: AppAudioCapture? = null
     private var segmenter: EnergySegmenter? = null
+    @Volatile
     private var streaming: StreamingTranscriber? = null
     private var worker: Thread? = null
 
@@ -213,14 +215,16 @@ class InterpreterService : Service() {
         notifyLog("模型文件：${found.absolutePath}")
         return WhisperAsrEngine(
             modelPath = found.absolutePath,
-            threads = WHISPER_THREADS,
+            threads = Settings.threads(this),
             language = Settings.asrLanguage(this)
         )
     }
 
     private fun startWorker() {
-        // 边说边出：设了开关才启用（CPU 换取低延迟）。占位识别时不开，省电且没意义。
-        streaming = if (Settings.partialEnabled(this) && asr is WhisperAsrEngine) {
+        // 边说边出：默认关闭（发热主因）。开启后若发现设备变热或识别过慢，
+        // 这里会自动把它关掉——用户不需要自己盯温度。
+        var partialsOn = Settings.partialEnabled(this) && asr is WhisperAsrEngine
+        streaming = if (partialsOn) {
             StreamingTranscriber(asr, onPartial = { partial -> overlay.setText("〔识别中〕$partial") })
         } else {
             null
@@ -229,6 +233,13 @@ class InterpreterService : Service() {
         worker = Thread({
             var count = 0
             while (!Thread.currentThread().isInterrupted) {
+
+                // 发热保护：系统报"偏热"以上就关掉临时字幕
+                if (partialsOn && thermalStatus() >= PowerManager.THERMAL_STATUS_MODERATE) {
+                    partialsOn = false
+                    streaming = null
+                    notifyLog("设备温度偏高，已自动关闭临时字幕（可换 tiny 模型或把线程降到 2）")
+                }
 
                 // 最终识别优先：只有队列空了才做临时识别，
                 // 否则"临时"会把"最终"挤死，表现就是字幕卡住不动
@@ -252,6 +263,14 @@ class InterpreterService : Service() {
                     "[识别失败 ${t.javaClass.simpleName}]"
                 }
                 val asrCost = System.currentTimeMillis() - asrStart
+
+                // 识别太慢说明这台机器扛不住频繁推理，自动关掉临时字幕降热
+                if (partialsOn && asrCost > SLOW_ASR_MS) {
+                    partialsOn = false
+                    streaming = null
+                    notifyLog("单句识别 ${asrCost}ms，已自动关闭临时字幕以降低发热")
+                }
+
                 if (sourceText.isBlank()) continue
 
                 val mtStart = System.currentTimeMillis()
@@ -270,6 +289,13 @@ class InterpreterService : Service() {
                 )
             }
         }, "interp-worker").also { it.start() }
+    }
+
+    /** 读取系统热状态（API 29+），用来做发热保护 */
+    private fun thermalStatus(): Int = try {
+        getSystemService(PowerManager::class.java).currentThermalStatus
+    } catch (_: Throwable) {
+        0
     }
 
     // ---------------------------------------------------------------- 收尾
@@ -380,8 +406,8 @@ class InterpreterService : Service() {
         /** 待识别的句子最多排这么多，超了就丢最旧的 */
         private const val MAX_QUEUE = 3
 
-        /** whisper 推理线程数：一般取大核数量，4~6 之间 */
-        private const val WHISPER_THREADS = 4
+        /** 单句识别超过这个耗时，就自动关掉临时字幕（这台机器扛不住频繁推理） */
+        private const val SLOW_ASR_MS = 3_000L
 
         @Volatile
         var isRunning: Boolean = false

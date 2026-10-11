@@ -19,10 +19,10 @@ import kotlin.math.abs
 class StreamingTranscriber(
     private val asr: AsrEngine,
     private val sampleRate: Int = 16_000,
-    /** 滚动窗口长度：太短丢上下文，太长拖慢推理 */
-    private val windowMs: Int = 5_000,
-    /** 两次临时识别的最小间隔，防止 CPU 打满 */
-    private val minIntervalMs: Long = 1_200,
+    /** 滚动窗口长度：太短丢上下文，太长拖慢推理（4 秒是功耗与延迟的折中） */
+    private val windowMs: Int = 4_000,
+    /** 两次临时识别的最小间隔，防止 CPU 打满（2 秒起步，降发热） */
+    private val minIntervalMs: Long = 2_000,
     /** 窗口里至少要有这么多音频才值得跑一次 */
     private val minAudioMs: Int = 500,
     private val onPartial: (String) -> Unit
