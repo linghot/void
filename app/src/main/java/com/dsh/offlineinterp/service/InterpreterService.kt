@@ -58,6 +58,10 @@ class InterpreterService : Service() {
     private var segmenter: EnergySegmenter? = null
     @Volatile
     private var streaming: StreamingTranscriber? = null
+
+    /** 因为积压被丢掉的句子数（心跳日志里显示） */
+    @Volatile
+    private var droppedSegments = 0
     private var worker: Thread? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -184,6 +188,7 @@ class InterpreterService : Service() {
             // 落后太多就丢掉最旧的：宁可漏一句，也不要越堆越卡
             while (segmentQueue.size >= MAX_QUEUE) {
                 segmentQueue.poll()
+                droppedSegments++
             }
             segmentQueue.offer(segment)
         })
@@ -232,7 +237,19 @@ class InterpreterService : Service() {
 
         worker = Thread({
             var count = 0
+            var blanks = 0
+            var lastBeat = System.currentTimeMillis()
             while (!Thread.currentThread().isInterrupted) {
+
+                // 心跳：每 5 秒报一次进度。卡在哪一步，看这行就知道
+                val now = System.currentTimeMillis()
+                if (now - lastBeat >= 5_000) {
+                    lastBeat = now
+                    notifyLog(
+                        "心跳：已出字幕 $count 句 · 识别为空 $blanks 次 · 丢弃 $droppedSegments 段 · " +
+                            "待处理 ${segmentQueue.size} 段 · 临时字幕 ${if (partialsOn) "开" else "关"}"
+                    )
+                }
 
                 // 发热保护：系统报"偏热"以上就关掉临时字幕
                 if (partialsOn && thermalStatus() >= PowerManager.THERMAL_STATUS_MODERATE) {
@@ -271,7 +288,13 @@ class InterpreterService : Service() {
                     notifyLog("单句识别 ${asrCost}ms，已自动关闭临时字幕以降低发热")
                 }
 
-                if (sourceText.isBlank()) continue
+                if (sourceText.isBlank()) {
+                    blanks++
+                    if (blanks % 5 == 1) {
+                        notifyLog("识别为空（累计 $blanks 次）：可能是纯音乐/静音段，或模型没真正跑起来")
+                    }
+                    continue
+                }
 
                 val mtStart = System.currentTimeMillis()
                 val translated = try {
@@ -281,6 +304,11 @@ class InterpreterService : Service() {
                 }
                 val mtCost = System.currentTimeMillis() - mtStart
                 count++
+
+                // 翻译失败要写在日志里，否则用户只看到字幕第二行没变，不知道是 API 的问题
+                if (translated.startsWith("[HTTP") || translated.startsWith("[翻译异常")) {
+                    notifyLog("翻译失败（${mtCost}ms）：${translated.take(120)}")
+                }
 
                 val audioMs = segment.size * 1000 / SAMPLE_RATE
                 overlay.setText(
